@@ -1,34 +1,34 @@
 {
   "extract_facts": {
-    "count": 1,
-    "mean": 4.004499385999225
+    "count": 2,
+    "mean": 4.962359507000656
   },
   "generate_requirement_gathering": {
-    "count": 1,
-    "mean": 4.6693383249985345
+    "count": 2,
+    "mean": 5.802589822998925
   },
   "generate_action_points": {
-    "count": 1,
-    "mean": 9.06011254400073
+    "count": 2,
+    "mean": 13.611867995001376
   },
   "generate_mom": {
-    "count": 1,
-    "mean": 11.040960130001622
+    "count": 2,
+    "mean": 9.513083003501379
   },
   "render_mom_pdf": {
-    "count": 1,
-    "mean": 1.391375205002987
+    "count": 2,
+    "mean": 1.717429076001281
   },
   "render_requirement_gathering_pdf": {
-    "count": 1,
-    "mean": 1.3075098939989402
+    "count": 2,
+    "mean": 1.3358058364992758
   },
   "render_action_points_pdf": {
-    "count": 1,
-    "mean": 1.2662330700004532
+    "count": 2,
+    "mean": 1.3495131910003693
   },
   "save_meeting_folder": {
-    "count": 1,
-    "mean": 0.003591020002204459
+    "count": 2,
+    "mean": 0.005425475001175073
   }
 }
