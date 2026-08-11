@@ -1,0 +1,71 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Sarathi Meeting Bot</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <h1>Sarathi Meeting Bot</h1>
+  <p class="muted">
+    Meetings recorded by the Chrome extension show up here automatically.
+    You don't need to do anything on this page day-to-day — it's just a
+    status view.
+  </p>
+
+  <details class="manual-upload">
+    <summary>Manually process an existing recording (testing / fallback)</summary>
+    <form method="post" action="/meetings/upload-form" enctype="multipart/form-data" class="start-form">
+      <label>Meeting title
+        <input type="text" name="title" placeholder="e.g. Weekly Sales Review" required>
+      </label>
+      <label>Recording file (audio or video)
+        <input type="file" name="audio" accept="audio/*,video/*" required>
+      </label>
+      <button type="submit">Generate documents</button>
+    </form>
+  </details>
+
+  <h2>Meetings</h2>
+  {% if not runs %}
+    <p class="muted">No meetings yet. Join a Google Meet with the Sarathi
+      Chrome extension installed and it'll appear here once it finishes.</p>
+  {% endif %}
+  {% for run in runs %}
+  <div class="meeting-card state-{{ run.state }}" data-run-id="{{ run.id }}" data-state="{{ run.state }}" data-created-at="{{ run.created_at }}">
+    <div class="meeting-card-top">
+      <div class="meeting-title">{{ run.title }}</div>
+      <span class="badge status-badge status-{{ run.progress.status | lower }}">{{ run.progress.status }}</span>
+    </div>
+
+    <div class="meeting-started">Started {{ run.started_display }}</div>
+
+    <div class="status-label">{{ run.progress.label if run.state not in ('failed', 'saved') }}</div>
+
+    <div class="progress-bar{% if run.progress.percent is none %} hidden{% endif %}">
+      <div class="progress-bar-fill" style="width: {{ run.progress.percent or 0 }}%"></div>
+    </div>
+    <div class="status-meta">
+      <span class="status-elapsed"></span>
+      <span class="status-percent">{% if run.progress.percent is not none %}{{ run.progress.percent }}%{% endif %}</span>
+      <span class="status-eta">{% if run.progress.eta_seconds is not none %}~{{ (run.progress.eta_seconds // 60) | int }}m {{ (run.progress.eta_seconds % 60) | round | int }}s remaining{% endif %}</span>
+    </div>
+
+    <div class="status-recorded{% if run.progress.recorded == False %} warning{% endif %}">
+      {% if run.progress.recorded == False %}⚠ No audio was captured for this meeting{% endif %}
+    </div>
+    <div class="error status-error">{% if run.state == 'failed' and run.error_message %}{{ run.error_message }}{% endif %}</div>
+
+    <div class="status-result">
+      {% if run.state == 'saved' and run.folder_path %}
+        <div class="result-box">
+          <span class="completed-banner">&#9989; Documents ready</span>
+          <code>{{ run.folder_path }}</code>
+        </div>
+      {% endif %}
+    </div>
+  </div>
+  {% endfor %}
+  <script src="/static/status.js" defer></script>
+</body>
+</html>

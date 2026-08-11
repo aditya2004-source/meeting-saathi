@@ -1,0 +1,22 @@
+{
+  "meeting_title": "Q3 Field Ops Sync",
+  "started_at": "2026-07-28T09:00:00+00:00",
+  "ended_at": "2026-07-28T09:22:00+00:00",
+  "attendees": [
+    {"name": "Dhaval Patel", "source": "diarization"},
+    {"name": "Priya Shah", "source": "diarization"},
+    {"name": "Rakesh Mehta", "source": "diarization"}
+  ],
+  "diarization_source": "pyannote_local",
+  "segments": [
+    {"start": 0.0, "end": 6.0, "speaker": "Dhaval Patel", "text": "Let's start. Today we need to review the field visit backlog in the West region and decide on the new expense limit."},
+    {"start": 6.5, "end": 14.0, "speaker": "Priya Shah", "text": "West region has 42 pending visits, mostly High Touch customers not seen in two weeks. I think we should prioritize those before month end."},
+    {"start": 14.5, "end": 20.0, "speaker": "Dhaval Patel", "text": "Agreed. Priya, can you send the prioritized visit list to the West team by Friday?"},
+    {"start": 20.5, "end": 23.0, "speaker": "Priya Shah", "text": "Yes, I'll send it by Friday."},
+    {"start": 23.5, "end": 32.0, "speaker": "Rakesh Mehta", "text": "On the expense limit, I looked at last month's data -- three employees went over the travel limit. I suggest we raise the travel limit from 2000 to 2500 rupees per trip."},
+    {"start": 32.5, "end": 38.0, "speaker": "Dhaval Patel", "text": "Let's go with that. Rakesh, please update the expense policy document and circulate it to all managers."},
+    {"start": 38.5, "end": 40.0, "speaker": "Rakesh Mehta", "text": "Will do, I'll have it out by next Wednesday."},
+    {"start": 40.5, "end": 48.0, "speaker": "Priya Shah", "text": "One more thing -- we still haven't decided who owns the customer re-categorization project. That's still open."},
+    {"start": 48.5, "end": 52.0, "speaker": "Dhaval Patel", "text": "Good point, let's leave that as an open question for next week's meeting."}
+  ]
+}

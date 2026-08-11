@@ -1,0 +1,34 @@
+{
+  "extract_facts": {
+    "count": 1,
+    "mean": 4.004499385999225
+  },
+  "generate_requirement_gathering": {
+    "count": 1,
+    "mean": 4.6693383249985345
+  },
+  "generate_action_points": {
+    "count": 1,
+    "mean": 9.06011254400073
+  },
+  "generate_mom": {
+    "count": 1,
+    "mean": 11.040960130001622
+  },
+  "render_mom_pdf": {
+    "count": 1,
+    "mean": 1.391375205002987
+  },
+  "render_requirement_gathering_pdf": {
+    "count": 1,
+    "mean": 1.3075098939989402
+  },
+  "render_action_points_pdf": {
+    "count": 1,
+    "mean": 1.2662330700004532
+  },
+  "save_meeting_folder": {
+    "count": 1,
+    "mean": 0.003591020002204459
+  }
+}

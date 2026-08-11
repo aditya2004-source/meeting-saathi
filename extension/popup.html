@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font-family: -apple-system, Helvetica, Arial, sans-serif; width: 260px; padding: 12px; }
+  h3 { margin: 0 0 8px 0; }
+  .status { font-size: 0.85em; color: #555; margin-bottom: 8px; min-height: 1.2em; }
+  input { width: 100%; box-sizing: border-box; padding: 6px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 4px; }
+  button { width: 100%; padding: 8px; cursor: pointer; border: none; border-radius: 4px; background: #2b6cb0; color: white; font-size: 0.95em; }
+  .hint { font-size: 0.72em; color: #888; margin-top: 8px; }
+</style>
+</head>
+<body>
+  <h3>Sarathi Meeting Bot</h3>
+  <div class="status" id="status">Checking status&hellip;</div>
+  <div id="micSection" style="display: none; margin-bottom: 8px;">
+    <div class="status" id="micStatus" style="color: #c0392b;"></div>
+    <button id="grantMic" style="background: #c0392b;">Enable Microphone Access</button>
+  </div>
+  <input type="text" id="title" placeholder="Meeting title (optional)">
+  <button id="toggle">Start Recording</button>
+  <p class="hint">
+    Chrome requires one click on this icon per meeting to start recording
+    (a browser security rule, not something we can skip) — click it right
+    after you join a call. After that, everything is automatic: it stops
+    when you leave, uploads, and generates your documents on its own.
+  </p>
+  <script src="popup.js"></script>
+</body>
+</html>

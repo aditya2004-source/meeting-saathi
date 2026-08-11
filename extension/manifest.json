@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Sarathi Meeting Bot",
+  "version": "1.0.0",
+  "description": "Records your Google Meet calls and sends them to your local Sarathi Meeting Bot for automatic MOM/Requirement Gathering Sheet/Action Points generation.",
+  "permissions": ["tabCapture", "offscreen", "storage", "activeTab", "notifications"],
+  "host_permissions": ["https://meet.google.com/*", "http://localhost:8420/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["content_script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Sarathi Meeting Bot",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "commands": {
+    "start-recording": {
+      "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },
+      "description": "Start recording the current Google Meet call"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
