@@ -99,10 +99,18 @@ def accept_chunk(
 def _process_chunk_then_maybe_finalize(run_id: str, sequence: int, chunk_path: Path, final: bool) -> None:
     try:
         _process_chunk(run_id, sequence, chunk_path)
-    except Exception as exc:  # noqa: BLE001 - top-level pipeline guard, by design
+    except Exception:  # noqa: BLE001 - per-chunk guard, by design
+        # A single chunk's transcribe/diarize step raising (e.g. one
+        # corrupt ~50s audio segment) used to fail the *entire* run here via
+        # db.mark_failed(), discarding every other chunk's already-processed
+        # segments even if the rest of the meeting was fine. Now this chunk
+        # just contributes no segments and the run continues -- only a
+        # failure in the finalize tail below (docgen/render/save, which
+        # can't partially succeed) still fails the whole run.
         traceback.print_exc()
-        db.mark_failed(run_id, exc)
-        return
+        state = get_or_create(run_id)
+        with state.lock:
+            state.pending_sequences.discard(sequence)
     if final:
         try:
             _wait_for_pending_then_finalize(run_id)

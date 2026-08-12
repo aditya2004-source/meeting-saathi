@@ -59,7 +59,12 @@ def _repair_invalid_backslash_escapes(text: str) -> str:
     return "".join(out)
 
 
-def _generate_json(system_prompt: str, response_schema: dict, user_content: str, max_output_tokens: int) -> dict:
+_MAX_OUTPUT_TOKENS_CAP = 32768
+
+
+def _generate_json(
+    system_prompt: str, response_schema: dict, user_content: str, max_output_tokens: int, _retried: bool = False
+) -> dict:
     response = _client.models.generate_content(
         model=settings.gemini_model,
         contents=user_content,
@@ -78,13 +83,36 @@ def _generate_json(system_prompt: str, response_schema: dict, user_content: str,
     try:
         return json.loads(_repair_invalid_backslash_escapes(text))
     except json.JSONDecodeError as exc:
+        finish_reason = None
+        if response.candidates:
+            finish_reason = response.candidates[0].finish_reason
+        # Confirmed in production: a transcript with a long Whisper
+        # hallucination loop (e.g. a repeated word in a low-signal audio
+        # chunk) makes Gemini's response balloon -- it genuinely runs out
+        # of its max_output_tokens budget mid-string, which json.loads
+        # reports as "Unterminated string...". Retry once with double the
+        # budget (capped) instead of failing the whole run outright.
+        if (
+            not _retried
+            and finish_reason == types.FinishReason.MAX_TOKENS
+            and max_output_tokens < _MAX_OUTPUT_TOKENS_CAP
+        ):
+            return _generate_json(
+                system_prompt,
+                response_schema,
+                user_content,
+                min(max_output_tokens * 2, _MAX_OUTPUT_TOKENS_CAP),
+                _retried=True,
+            )
         # A bare JSONDecodeError ("Unterminated string starting at: line 1
         # column 82") gives no clue what Gemini actually returned -- include
         # a snippet so a real failure (as opposed to the empty-transcript
         # case handled by empty_meeting_documents() below, or the repairable
         # backslash-escape case handled above) is diagnosable.
         snippet = text[:200]
-        raise ValueError(f"Gemini returned invalid JSON ({exc}): {snippet!r}") from exc
+        raise ValueError(
+            f"Gemini returned invalid JSON ({exc}, finish_reason={finish_reason}): {snippet!r}"
+        ) from exc
 
 
 def extract_meeting_facts(transcript_text: str) -> dict:
