@@ -225,15 +225,26 @@ async function startRecording(tabId, title) {
 }
 
 async function stopRecording() {
-  const { activeTabId } = await getState();
+  const { activeTabId, runId } = await getState();
   if (activeTabId === null) return { ok: false, reason: "not recording" };
   const tabId = activeTabId;
-  // No speakerEvents/runId passed here -- offscreen.js already has runId
-  // from START_RECORDING, and pulls a fresh speakerEvents snapshot via
+  // No speakerEvents passed here -- offscreen.js already has runId from
+  // START_RECORDING, and pulls a fresh speakerEvents snapshot via
   // GET_SPEAKER_EVENTS_SNAPSHOT right before every chunk/finalize upload
   // (including this terminal one), so it's always current as of the
   // actual upload moment rather than a possibly-stale value passed here.
-  const result = await chrome.runtime.sendMessage({ target: "offscreen", type: "STOP_RECORDING" });
+  let result;
+  try {
+    result = await chrome.runtime.sendMessage({ target: "offscreen", type: "STOP_RECORDING" });
+  } catch (err) {
+    // The offscreen document is gone -- e.g. the extension was reloaded/
+    // updated mid-meeting, which tears down offscreen documents outright
+    // (confirmed in production: this exact case left a run stuck showing
+    // "Recording" with an ever-increasing elapsed timer forever, since the
+    // uncaught rejection here used to skip everything below, including the
+    // /cancel call). Treat it the same as "nothing to stop."
+    result = { ok: false, reason: "offscreen document unavailable" };
+  }
   await setState({
     activeTabId: null,
     currentTitle: null,
@@ -247,6 +258,12 @@ async function stopRecording() {
     notifyTab(tabId, { type: "SARATHI_UPLOAD_DONE" });
   } else {
     const reason = (result && (result.error || result.reason)) || "unknown error";
+    // Without this, the backend run has no way to ever hear that the
+    // meeting ended -- it sits at chunk_processing/received forever,
+    // showing "Recording" on the dashboard with a timer that never stops.
+    if (runId) {
+      fetch(`${SERVER_BASE_URL}/meetings/${runId}/cancel`, { method: "POST" }).catch(() => {});
+    }
     notifyError(
       tabId,
       { type: "SARATHI_UPLOAD_FAILED", reason },

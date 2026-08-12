@@ -4,6 +4,7 @@ const toggleBtn = document.getElementById("toggle");
 const micSectionEl = document.getElementById("micSection");
 const micStatusEl = document.getElementById("micStatus");
 const grantMicBtn = document.getElementById("grantMic");
+const openDashboardBtn = document.getElementById("openDashboard");
 
 // Offscreen documents can't show the native microphone permission prompt
 // (a Chrome restriction on that document type) -- so without this,
@@ -47,6 +48,10 @@ grantMicBtn.addEventListener("click", () => {
   // stable place to appear; re-opening this popup afterward re-checks the
   // permission (refreshMicSection() runs fresh on every popup open).
   chrome.tabs.create({ url: chrome.runtime.getURL("permissions.html") });
+});
+
+openDashboardBtn.addEventListener("click", () => {
+  chrome.tabs.create({ url: "http://localhost:8420/" });
 });
 
 function refreshStatus() {
