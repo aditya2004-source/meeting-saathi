@@ -204,6 +204,15 @@ def _assemblyai_transcribe_and_diarize(
     config = aai.TranscriptionConfig(
         speech_models=["universal-3-5-pro", "universal-2"],
         speaker_labels=True,
+        # Without this, AssemblyAI defaults to English-only decoding, which
+        # mistranscribes Hindi speech as garbled English rather than actual
+        # Hindi text. This makes it transcribe accurately in whatever
+        # language is spoken instead -- note it does NOT translate to
+        # English (AssemblyAI has no direct equivalent of Whisper's
+        # task="translate"), so non-English text can still reach this
+        # branch's output; the docgen prompts' language instruction is the
+        # only translation layer for this specific fallback path.
+        language_detection=True,
     )
 
     def _run():

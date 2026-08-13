@@ -4,9 +4,11 @@ module's SpeakerSegment shape, factored out so it's testable without a
 network call. Uses SimpleNamespace to stand in for AssemblyAI SDK Utterance
 objects (only .text/.start/.end/.speaker are read).
 """
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
-from app.pipeline.diarize import _utterances_to_segments
+from app.pipeline.diarize import _assemblyai_transcribe_and_diarize, _utterances_to_segments
 
 
 def _utterance(text, start_ms, end_ms, speaker):
@@ -55,3 +57,19 @@ def test_skips_empty_or_whitespace_only_utterances():
 
 def test_empty_utterance_list_returns_empty_segments():
     assert _utterances_to_segments([]) == []
+
+
+def test_assemblyai_config_requests_language_detection():
+    # Without this, AssemblyAI defaults to English-only decoding, which
+    # mistranscribes Hindi speech as garbled English instead of accurate
+    # Hindi text -- a real bug this branch (the pyannote-fallback path's
+    # paid alternative) had until this was added.
+    fake_transcript = MagicMock(utterances=[])
+
+    with patch("assemblyai.TranscriptionConfig") as mock_config_cls, patch(
+        "assemblyai.Transcriber"
+    ) as mock_transcriber_cls:
+        mock_transcriber_cls.return_value.transcribe.return_value = fake_transcript
+        _assemblyai_transcribe_and_diarize(Path("irrelevant.webm"))
+
+    assert mock_config_cls.call_args.kwargs["language_detection"] is True

@@ -119,7 +119,7 @@ def extract_meeting_facts(transcript_text: str) -> dict:
     return _generate_json(EXTRACT_SYSTEM_PROMPT, EXTRACT_RESPONSE_SCHEMA, transcript_text, max_output_tokens=4096)
 
 
-def empty_meeting_documents(meeting_title: str) -> dict:
+def empty_meeting_documents(meeting_title: str, meeting_date: str = "") -> dict:
     """Same return shape as generate_documents(), for a meeting with no
     transcribed speech at all (e.g. a short test call where nobody spoke).
 
@@ -133,16 +133,20 @@ def empty_meeting_documents(meeting_title: str) -> dict:
     anyway.
     """
     note = "No speech was captured during this meeting, so there is nothing to summarize."
+    heading_suffix = f" ({meeting_date})" if meeting_date else ""
     return {
         "facts": {},
-        "mom": {"title": "Minutes of Meeting", "markdown_body": f"# Minutes of Meeting — {meeting_title}\n\n{note}\n"},
+        "mom": {
+            "title": "Minutes of Meeting",
+            "markdown_body": f"# Minutes of Meeting — {meeting_title}{heading_suffix}\n\n{note}\n",
+        },
         "requirement_gathering": {
             "title": "Requirement Gathering Sheet",
-            "markdown_body": f"# Requirement Gathering Sheet — {meeting_title}\n\n{note}\n",
+            "markdown_body": f"# Requirement Gathering Sheet — {meeting_title}{heading_suffix}\n\n{note}\n",
         },
         "action_points": {
             "title": "Action Points",
-            "markdown_body": f"# Action Points — {meeting_title}\n\n{note}\n",
+            "markdown_body": f"# Action Points — {meeting_title}{heading_suffix}\n\n{note}\n",
         },
     }
 
@@ -151,10 +155,17 @@ def _generate_document(
     system_prompt: str,
     response_schema: dict,
     meeting_title: str,
+    meeting_date: str,
+    attendees: list[str],
     facts: dict,
     transcript_text: str,
 ) -> dict:
-    grounding = {"meeting_title": meeting_title, "extracted_facts": facts}
+    grounding = {
+        "meeting_title": meeting_title,
+        "meeting_date": meeting_date,
+        "attendees": attendees,
+        "extracted_facts": facts,
+    }
     user_content = (
         "Here is the grounding data (JSON) and the full transcript. "
         "Only use facts present here.\n\n"
@@ -165,7 +176,11 @@ def _generate_document(
 
 
 def generate_documents(
-    meeting_title: str, transcript_text: str, recorder: Optional[TimingRecorder] = None
+    meeting_title: str,
+    transcript_text: str,
+    attendees: Optional[list[str]] = None,
+    meeting_date: str = "",
+    recorder: Optional[TimingRecorder] = None,
 ) -> dict:
     """Two-call pattern: Call 1 extracts structured facts (forced JSON
     schema), Call 2 runs three times (forced JSON schema each) to write
@@ -173,7 +188,14 @@ def generate_documents(
     only in Call 1's facts + the transcript, so the three are independent of
     each other and run concurrently (network-bound Gemini calls release the
     GIL, so real threads pay off here without needing an asyncio rewrite).
+
+    `attendees` should be the deterministic roster+spoken-names union from
+    app.pipeline.roster.compute_attendees() -- the authoritative Attendees
+    field, not left for Gemini to infer from who spoke. `meeting_date`
+    should be app.pipeline.merge.format_meeting_date()'s output -- the real
+    run timestamp, not left for Gemini to guess/extract from the transcript.
     """
+    attendees = attendees or []
     if recorder is None:
         facts = extract_meeting_facts(transcript_text)
     else:
@@ -182,9 +204,13 @@ def generate_documents(
 
     def _generate(stage: str, system_prompt, schema):
         if recorder is None:
-            return _generate_document(system_prompt, schema, meeting_title, facts, transcript_text)
+            return _generate_document(
+                system_prompt, schema, meeting_title, meeting_date, attendees, facts, transcript_text
+            )
         with timed(recorder, stage):
-            return _generate_document(system_prompt, schema, meeting_title, facts, transcript_text)
+            return _generate_document(
+                system_prompt, schema, meeting_title, meeting_date, attendees, facts, transcript_text
+            )
 
     with ThreadPoolExecutor(max_workers=3) as pool:
         mom_future = pool.submit(_generate, "generate_mom", MOM_SYSTEM_PROMPT, MOM_RESPONSE_SCHEMA)

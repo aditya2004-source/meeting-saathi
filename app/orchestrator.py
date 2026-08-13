@@ -11,6 +11,7 @@ from app.docgen.render_pdf import render_documents_to_pdf
 from app.pipeline.diarize import diarize
 from app.pipeline.download import working_dir_for
 from app.pipeline.merge import build_transcript, render_plain_text
+from app.pipeline.roster import compute_attendees, parse_attendee_roster
 from app.pipeline.speaker_names import (
     fill_unresolved_with_excerpts,
     parse_speaker_events,
@@ -50,12 +51,23 @@ def _run(run_id: str) -> None:
     if speaker_events_path.exists():
         events = parse_speaker_events(speaker_events_path.read_text(encoding="utf-8"))
         segments = resolve_speaker_names(segments, events)
+
+    roster: list[str] = []
+    roster_path = work_dir / "attendee_roster.json"
+    if roster_path.exists():
+        roster = parse_attendee_roster(roster_path.read_text(encoding="utf-8"))
+    # Must run BEFORE fill_unresolved_with_excerpts() below -- that call
+    # turns any remaining "Speaker N"/"Unknown" placeholder into an
+    # "Unidentified speaker N" label, which is not a real name and must
+    # never end up in the attendee list.
+    attendees = compute_attendees(roster, segments)
+
     # Terminal guarantee (unconditional, unlike the resolve_speaker_names()
     # call above): pyannote always mints "Speaker N"/"Unknown" regardless of
     # whether speaker_events.json exists at all, so whatever's still
-    # placeholder-shaped at this point becomes a transcript-excerpt label
-    # instead of a bare "Speaker N" reaching the final documents.
-    segments = fill_unresolved_with_excerpts(segments)
+    # placeholder-shaped at this point becomes a clean "Unidentified speaker
+    # N" label instead of a bare "Speaker N" reaching the final documents.
+    segments, unidentified_excerpts = fill_unresolved_with_excerpts(segments)
 
     now = datetime.datetime.now(datetime.timezone.utc)
     transcript = build_transcript(
@@ -63,11 +75,19 @@ def _run(run_id: str) -> None:
         started_at=run["created_at"],
         ended_at=now.isoformat(),
         segments=segments,
+        attendees=attendees,
+        unidentified_speaker_excerpts=unidentified_excerpts,
     )
     transcript_text = render_plain_text(transcript)
 
     db.update_run(run_id, state="generating_docs")
-    docs = docgen_engine.generate_documents(run["title"], transcript_text, recorder=recorder)
+    docs = docgen_engine.generate_documents(
+        run["title"],
+        transcript_text,
+        attendees=attendees,
+        meeting_date=transcript["meeting_date_display"],
+        recorder=recorder,
+    )
 
     db.update_run(run_id, state="rendering")
     mom_pdf_path = work_dir / "MOM.pdf"

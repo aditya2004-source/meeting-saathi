@@ -47,6 +47,7 @@ def transcribe(
     recorder: Optional[TimingRecorder] = None,
     stage: str = "transcribe",
     repeated: bool = False,
+    task: Optional[str] = None,
 ) -> list[TranscribedSegment]:
     def _run() -> list:
         segments, _info = _batched_model().transcribe(
@@ -57,6 +58,11 @@ def transcribe(
             # (opposite of plain WhisperModel.transcribe) -- explicit here
             # since diarization alignment depends on meaningful start/end.
             without_timestamps=False,
+            # "translate" (the default via settings.whisper_task) decodes
+            # straight to English regardless of spoken language; "transcribe"
+            # keeps the original language. task=None falls back to settings
+            # so existing positional call sites don't need updating.
+            task=task if task is not None else settings.whisper_task,
         )
         return list(segments)
 

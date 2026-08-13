@@ -17,6 +17,24 @@ let pendingSpeakerName = null;
 let pendingSpeakerTimer = null;
 const SPEAKING_INDICATOR_MIN_DURATION_MS = 300;
 
+// People-panel attendee roster scrape (best-effort, only runs while a
+// recording is in progress -- see extension/DESIGN.md). The speaking-
+// indicator scrape above only ever sees someone who actually spoke; a
+// participant who joined but stayed silent for the whole meeting is
+// otherwise invisible to this extension entirely. Meet's People panel is
+// the only place that lists every attendee regardless of whether they
+// spoke, but it isn't normally open during a call -- this periodically
+// opens it briefly, reads the roster, and restores whatever open/closed
+// state it found (never closes a panel the user opened themselves).
+let rosterInterval = null;
+let rosterInitialTimer = null;
+let sentRosterNames = new Set();
+const ROSTER_SCRAPE_INTERVAL_MS = 4 * 60 * 1000; // every ~4 minutes
+const ROSTER_SCRAPE_INITIAL_DELAY_MS = 10 * 1000; // ~10s after recording starts
+const ROSTER_PANEL_SETTLE_MS = 400; // let the panel render rows after opening
+const ROSTER_IGNORED_TEXT_RE =
+  /^(you|meeting host|contributors|in this meeting|in the meeting|waiting to join|add others|more options|people|mute all)$/i;
+
 function getMeetingTitle() {
   // Meet's document.title is usually "Meet - <name or code>", or just "Meet"
   // before a name is set. Best-effort only -- the popup lets you fix it up
@@ -153,6 +171,104 @@ function stopSpeakerObserver() {
   pendingSpeakerName = null;
 }
 
+function findPeoplePanelToggleButton() {
+  // Best-effort heuristic, NOT a stable API -- same caveat as
+  // findActiveSpeakerName() above: must be re-verified against a live
+  // multi-participant call before being fully trusted.
+  return (
+    document.querySelector('button[aria-label*="show everyone" i]') ||
+    document.querySelector('button[aria-label*="people" i]') ||
+    null
+  );
+}
+
+function findPeoplePanelContainer() {
+  return (
+    document.querySelector('[role="list"][aria-label*="participants" i]') ||
+    document.querySelector('[role="list"][aria-label*="people" i]') ||
+    document.querySelector('[aria-label*="participants" i]')
+  );
+}
+
+function isPeoplePanelOpen() {
+  const btn = findPeoplePanelToggleButton();
+  if (btn && btn.getAttribute("aria-pressed") === "true") return true;
+  return !!findPeoplePanelContainer();
+}
+
+function readPeoplePanelRoster() {
+  const container = findPeoplePanelContainer();
+  if (!container) return [];
+
+  const rows = container.querySelectorAll('[role="listitem"]');
+  const names = [];
+  const seen = new Set();
+  for (const row of rows) {
+    const nameEl = Array.from(row.querySelectorAll("span, div")).find(
+      (el) => el.children.length === 0 && el.textContent?.trim()
+    );
+    const raw = (nameEl?.textContent || "").trim();
+    if (!raw || ROSTER_IGNORED_TEXT_RE.test(raw)) continue;
+    const key = raw.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    names.push(raw);
+  }
+  return names;
+}
+
+function sendRosterUpdate(names) {
+  const fresh = names.filter((n) => !sentRosterNames.has(n.toLowerCase()));
+  if (fresh.length === 0) return;
+  fresh.forEach((n) => sentRosterNames.add(n.toLowerCase()));
+  // Sends the full current roster each time (not just the new names) --
+  // background.js keeps the latest snapshot, so a name dropping off Meet's
+  // panel between scrapes (e.g. it briefly failed to render) doesn't lose
+  // a name already captured.
+  chrome.runtime.sendMessage({ type: "ROSTER_UPDATE", names, atMs: Date.now() });
+}
+
+function scrapeRoster() {
+  const btn = findPeoplePanelToggleButton();
+  if (!btn) {
+    // No toggle found -- fall back to a passive read in case the panel is
+    // already open some other way (e.g. the user opened it themselves).
+    if (isPeoplePanelOpen()) {
+      const names = readPeoplePanelRoster();
+      if (names.length) sendRosterUpdate(names);
+    }
+    return;
+  }
+  const wasOpen = isPeoplePanelOpen();
+  if (!wasOpen) btn.click();
+  setTimeout(() => {
+    const names = readPeoplePanelRoster();
+    if (names.length) sendRosterUpdate(names);
+    if (!wasOpen) btn.click(); // restore whatever state we found it in
+  }, ROSTER_PANEL_SETTLE_MS);
+}
+
+function startRosterScraper() {
+  if (rosterInterval || rosterInitialTimer) return;
+  sentRosterNames = new Set();
+  rosterInitialTimer = setTimeout(() => {
+    rosterInitialTimer = null;
+    scrapeRoster();
+  }, ROSTER_SCRAPE_INITIAL_DELAY_MS);
+  rosterInterval = setInterval(scrapeRoster, ROSTER_SCRAPE_INTERVAL_MS);
+}
+
+function stopRosterScraper() {
+  if (rosterInterval) {
+    clearInterval(rosterInterval);
+    rosterInterval = null;
+  }
+  if (rosterInitialTimer) {
+    clearTimeout(rosterInitialTimer);
+    rosterInitialTimer = null;
+  }
+}
+
 // isError: red, stays until dismissed. persistent (default: same as
 // isError): stays until dismissed but isn't styled as an error -- used for
 // the "how to start" reminder below, which needs to survive longer than 6s
@@ -205,18 +321,22 @@ chrome.runtime.onMessage.addListener((message) => {
     // manual-start path for free since it broadcasts this same message.
     recordingActive = true;
     startSpeakerObserver();
+    startRosterScraper();
   } else if (message.type === "SARATHI_RECORDING_FAILED") {
     showBanner(`Sarathi Meeting Bot could not start recording: ${message.reason}`, true);
     recordingActive = false;
     stopSpeakerObserver();
+    stopRosterScraper();
   } else if (message.type === "SARATHI_UPLOAD_DONE") {
     showBanner("Recording saved — documents are being generated", false);
     recordingActive = false;
     stopSpeakerObserver();
+    stopRosterScraper();
   } else if (message.type === "SARATHI_UPLOAD_FAILED") {
     showBanner(`Sarathi Meeting Bot: upload failed (${message.reason}) — is the local server running?`, true);
     recordingActive = false;
     stopSpeakerObserver();
+    stopRosterScraper();
   } else if (message.type === "SARATHI_CHUNK_UPLOAD_FAILED") {
     showBanner(
       `Sarathi Meeting Bot: chunk ${message.sequence} failed to upload (${message.reason}) — some audio may be missing`,
@@ -248,6 +368,7 @@ function poll() {
     if (recordingActive) {
       recordingActive = false;
       stopSpeakerObserver();
+      stopRosterScraper();
     }
   }
 }

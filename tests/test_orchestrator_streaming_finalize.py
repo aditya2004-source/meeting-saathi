@@ -33,8 +33,10 @@ def _install_fakes(monkeypatch, run_row, saved_files):
 
     monkeypatch.setattr(db, "update_run", fake_update_run)
 
-    def fake_generate_documents(title, transcript_text, recorder=None):
+    def fake_generate_documents(title, transcript_text, attendees=None, meeting_date="", recorder=None):
         saved_files["_transcript_text_seen_by_docgen"] = transcript_text
+        saved_files["_attendees_seen_by_docgen"] = attendees
+        saved_files["_meeting_date_seen_by_docgen"] = meeting_date
         return {
             "mom": {"markdown_body": "mom body"},
             "requirement_gathering": {"markdown_body": "rg body"},
@@ -110,12 +112,18 @@ def test_finalize_run_resolves_dom_names_and_never_leaves_bare_placeholders(
 
     assert speakers[0] == "Priya Shah"
     assert speakers[1] == "Rahul Verma"
-    assert "who is speaking right now" in speakers[2]
-    assert speakers[2].startswith("Unidentified speaker (")
+    assert speakers[2] == "Unidentified speaker 1"
+    assert "who is speaking right now" in transcript["unidentified_speaker_excerpts"]["Unidentified speaker 1"]
 
     for speaker in speakers:
         assert speaker != "Unknown"
         assert not speaker.startswith("Speaker ")
+
+    # Real names (roster-independent here, since no attendee_roster.json was
+    # written) still make it into the deterministic attendee list; the
+    # unidentified placeholder must not.
+    assert saved_files["_attendees_seen_by_docgen"] == ["Priya Shah", "Rahul Verma"]
+    assert transcript["attendees"] == ["Priya Shah", "Rahul Verma"]
 
     assert run_row["state"] == "saved"
     assert run_row["folder_path"] is not None
@@ -155,10 +163,11 @@ def test_finalize_run_without_speaker_events_still_fills_placeholders(tmp_path, 
     speakers = [seg["speaker"] for seg in transcript["segments"]]
 
     # Both lines belong to the same chunk-tagged placeholder group, so they
-    # must share one excerpt label, not two different ones.
-    assert speakers[0] == speakers[1]
-    assert "first line" in speakers[0]
-    assert "second line same person" in speakers[0]
+    # must share one label, not two different ones.
+    assert speakers[0] == speakers[1] == "Unidentified speaker 1"
+    excerpt = transcript["unidentified_speaker_excerpts"]["Unidentified speaker 1"]
+    assert "first line" in excerpt
+    assert "second line same person" in excerpt
 
 
 def test_finalize_run_with_no_speech_skips_gemini_and_still_saves(tmp_path, monkeypatch, run_id):

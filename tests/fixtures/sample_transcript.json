@@ -2,11 +2,8 @@
   "meeting_title": "Q3 Field Ops Sync",
   "started_at": "2026-07-28T09:00:00+00:00",
   "ended_at": "2026-07-28T09:22:00+00:00",
-  "attendees": [
-    {"name": "Dhaval Patel", "source": "diarization"},
-    {"name": "Priya Shah", "source": "diarization"},
-    {"name": "Rakesh Mehta", "source": "diarization"}
-  ],
+  "meeting_date_display": "28 July 2026, 2:30 PM IST",
+  "attendees": ["Dhaval Patel", "Priya Shah", "Rakesh Mehta"],
   "diarization_source": "pyannote_local",
   "segments": [
     {"start": 0.0, "end": 6.0, "speaker": "Dhaval Patel", "text": "Let's start. Today we need to review the field visit backlog in the West region and decide on the new expense limit."},

@@ -1,4 +1,3 @@
-import datetime
 import json
 import threading
 from pathlib import Path
@@ -14,6 +13,7 @@ from app import orchestrator_streaming
 from app.config import settings
 from app.orchestrator import process_recording
 from app.pipeline.download import working_dir_for
+from app.pipeline.merge import format_meeting_date
 from app.pipeline.timing import load_stage_history, load_timing
 from app.progress import describe_progress
 
@@ -37,12 +37,10 @@ _STAGE_HISTORY_PATH = settings.project_root / "data" / "stage_duration_history.j
 def _format_started(created_at: str) -> str:
     """Raw ISO timestamps (e.g. "2026-08-10T10:18:17.897755+00:00") aren't
     something a non-technical user should have to read -- shown on the
-    dashboard as a plain local date/time instead."""
-    try:
-        dt = datetime.datetime.fromisoformat(created_at).astimezone()
-    except (ValueError, TypeError):
-        return created_at
-    return dt.strftime("%-d %b %Y, %-I:%M %p")  # e.g. "10 Aug 2026, 4:06 PM"
+    dashboard as a plain local date/time instead. Reuses the same
+    settings.report_timezone-based formatter as the generated documents, so
+    the dashboard and MOM/RG/AP show the identical date/time for a run."""
+    return format_meeting_date(created_at)
 
 
 def _load_chunk_durations(work_dir: Path) -> dict | None:
@@ -86,7 +84,13 @@ def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request, "runs": runs})
 
 
-def _start_processing(title: str, content: bytes, filename: str, speaker_events: str | None = None) -> dict:
+def _start_processing(
+    title: str,
+    content: bytes,
+    filename: str,
+    speaker_events: str | None = None,
+    attendee_roster: str | None = None,
+) -> dict:
     run = db.create_run(title=title.strip() or "Untitled Meeting", audio_path="")
     work_dir = working_dir_for(run["id"])
     suffix = Path(filename or "recording.webm").suffix or ".webm"
@@ -105,6 +109,18 @@ def _start_processing(title: str, content: bytes, filename: str, speaker_events:
         else:
             (work_dir / "speaker_events.json").write_text(speaker_events, encoding="utf-8")
 
+    if attendee_roster:
+        # Best-effort sidecar from the extension's People-panel scrape (see
+        # extension/DESIGN.md) -- validity is checked by
+        # app.pipeline.roster when the orchestrator reads it back, so a
+        # malformed value here just means no roster is available.
+        try:
+            json.loads(attendee_roster)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        else:
+            (work_dir / "attendee_roster.json").write_text(attendee_roster, encoding="utf-8")
+
     run = db.update_run(run["id"], audio_path=str(audio_path), state="received")
 
     thread = threading.Thread(target=process_recording, args=(run["id"],), daemon=True)
@@ -117,15 +133,21 @@ async def upload_meeting(
     title: str = Form(...),
     audio: UploadFile = File(...),
     speaker_events: str | None = Form(None),
+    attendee_roster: str | None = Form(None),
 ):
     """Used by both the Chrome extension (automatic) and the manual form on
     the status page (fallback/testing): receives a finished recording and
     kicks off transcription -> diarization -> document generation -> save.
     `speaker_events` is optional JSON (see extension/DESIGN.md) used to
     resolve real speaker names instead of "Speaker N" placeholders.
+    `attendee_roster` is optional JSON, the People-panel attendee list, used
+    as the authoritative Attendees field instead of inferring it from who
+    spoke.
     """
     content = await audio.read()
-    run = _start_processing(title, content, audio.filename or "recording.webm", speaker_events)
+    run = _start_processing(
+        title, content, audio.filename or "recording.webm", speaker_events, attendee_roster
+    )
     return JSONResponse({"id": run["id"], "state": run["state"]})
 
 
@@ -188,9 +210,12 @@ async def upload_chunk(
     sequence: int = Form(...),
     audio: UploadFile = File(...),
     speaker_events: str | None = Form(None),
+    attendee_roster: str | None = Form(None),
 ):
     content = await audio.read()
-    orchestrator_streaming.accept_chunk(run_id, sequence, content, speaker_events, final=False)
+    orchestrator_streaming.accept_chunk(
+        run_id, sequence, content, speaker_events, attendee_roster, final=False
+    )
     return JSONResponse({"id": run_id, "sequence": sequence, "accepted": True})
 
 
@@ -200,7 +225,10 @@ async def finalize_meeting(
     sequence: int = Form(...),
     audio: UploadFile = File(...),
     speaker_events: str | None = Form(None),
+    attendee_roster: str | None = Form(None),
 ):
     content = await audio.read()
-    orchestrator_streaming.accept_chunk(run_id, sequence, content, speaker_events, final=True)
+    orchestrator_streaming.accept_chunk(
+        run_id, sequence, content, speaker_events, attendee_roster, final=True
+    )
     return JSONResponse({"id": run_id, "state": "chunk_processing"})

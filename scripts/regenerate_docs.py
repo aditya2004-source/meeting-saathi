@@ -26,7 +26,12 @@ def main() -> None:
     transcript = json.loads(transcript_path.read_text(encoding="utf-8"))
     transcript_text = render_plain_text(transcript)
 
-    docs = docgen_engine.generate_documents(transcript["meeting_title"], transcript_text)
+    docs = docgen_engine.generate_documents(
+        transcript["meeting_title"],
+        transcript_text,
+        attendees=transcript.get("attendees"),
+        meeting_date=transcript.get("meeting_date_display", ""),
+    )
 
     out_dir = transcript_path.parent
     for key, filename in [

@@ -29,6 +29,7 @@ from app.docgen.render_pdf import render_documents_to_pdf
 from app.pipeline.diarize import diarize_chunk, probe_duration_seconds
 from app.pipeline.download import working_dir_for
 from app.pipeline.merge import build_transcript, render_plain_text
+from app.pipeline.roster import compute_attendees, parse_attendee_roster
 from app.pipeline.speaker_names import (
     fill_unresolved_with_excerpts,
     parse_speaker_events,
@@ -60,6 +61,7 @@ def accept_chunk(
     sequence: int,
     content: bytes,
     speaker_events_json: Optional[str],
+    attendee_roster_json: Optional[str],
     final: bool,
 ) -> None:
     """Called from the /meetings/{run_id}/chunk and /finalize routes. Writes
@@ -84,6 +86,19 @@ def accept_chunk(
             pass
         else:
             (work_dir / "speaker_events.json").write_text(speaker_events_json, encoding="utf-8")
+
+    if attendee_roster_json:
+        # Same best-effort parse-and-ignore convention -- malformed input
+        # just means no roster is available at finalize time. Each chunk
+        # upload carries the extension's latest roster snapshot, so this
+        # file just gets overwritten with the freshest one as the meeting
+        # progresses.
+        try:
+            json.loads(attendee_roster_json)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        else:
+            (work_dir / "attendee_roster.json").write_text(attendee_roster_json, encoding="utf-8")
 
     run = db.get_run(run_id)
     if run is not None and run["state"] not in _PAST_CHUNK_PROCESSING:
@@ -206,7 +221,18 @@ def finalize_run(run_id: str) -> None:
     if speaker_events_path.exists():
         events = parse_speaker_events(speaker_events_path.read_text(encoding="utf-8"))
         segments = resolve_speaker_names(segments, events)
-    segments = fill_unresolved_with_excerpts(segments)
+
+    roster: list[str] = []
+    roster_path = work_dir / "attendee_roster.json"
+    if roster_path.exists():
+        roster = parse_attendee_roster(roster_path.read_text(encoding="utf-8"))
+    # Must run BEFORE fill_unresolved_with_excerpts() below -- that call
+    # turns any remaining "Speaker N"/"Unknown" placeholder into an
+    # "Unidentified speaker N" label, which is not a real name and must
+    # never end up in the attendee list.
+    attendees = compute_attendees(roster, segments)
+
+    segments, unidentified_excerpts = fill_unresolved_with_excerpts(segments)
 
     now = datetime.datetime.now(datetime.timezone.utc)
     transcript = build_transcript(
@@ -214,19 +240,27 @@ def finalize_run(run_id: str) -> None:
         started_at=run["created_at"],
         ended_at=now.isoformat(),
         segments=segments,
+        attendees=attendees,
+        unidentified_speaker_excerpts=unidentified_excerpts,
     )
     transcript_text = render_plain_text(transcript)
 
     db.update_run(run_id, state="generating_docs")
     if segments:
-        docs = docgen_engine.generate_documents(run["title"], transcript_text, recorder=recorder)
+        docs = docgen_engine.generate_documents(
+            run["title"],
+            transcript_text,
+            attendees=attendees,
+            meeting_date=transcript["meeting_date_display"],
+            recorder=recorder,
+        )
     else:
         # No transcribed speech at all (e.g. a short test call where nobody
         # spoke) -- confirmed in production that calling Gemini with an
         # essentially empty transcript makes it return non-JSON text,
         # crashing json.loads(). A "nothing was said" document is both
         # truthful and avoids that failure mode entirely.
-        docs = docgen_engine.empty_meeting_documents(run["title"])
+        docs = docgen_engine.empty_meeting_documents(run["title"], transcript["meeting_date_display"])
 
     db.update_run(run_id, state="rendering")
     mom_pdf_path = work_dir / "MOM.pdf"

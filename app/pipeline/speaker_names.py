@@ -227,45 +227,64 @@ def speaker_from_dom_events(
 _EXCERPT_MAX_CHARS = 160
 
 
-def _make_excerpt_label(texts: list[str], max_lines: int = 3) -> str:
+def _make_excerpt(texts: list[str], max_lines: int = 3) -> str:
     lines = [t.strip() for t in texts[:max_lines] if t.strip()]
     excerpt = " / ".join(lines) if lines else "(no transcribed speech)"
     if len(excerpt) > _EXCERPT_MAX_CHARS:
         excerpt = excerpt[: _EXCERPT_MAX_CHARS - 3].rstrip() + "..."
-    return f'Unidentified speaker ("{excerpt}")'
+    return excerpt
 
 
-def fill_unresolved_with_excerpts(segments: list[SpeakerSegment]) -> list[SpeakerSegment]:
+def fill_unresolved_with_excerpts(
+    segments: list[SpeakerSegment],
+) -> tuple[list[SpeakerSegment], dict[str, str]]:
     """Terminal guarantee, called after resolve_speaker_names(): no bare
     "Speaker N" or "Unknown" placeholder is ever allowed to reach
     build_transcript()/Gemini. Every remaining placeholder-shaped segment is
-    replaced with a label quoting a few lines of that speaker's own
-    transcript, so a human reading the final document can manually identify
-    who it was instead of seeing a meaningless "Speaker 2".
+    replaced with a clean, sequential "Unidentified speaker N" label --
+    presentable in a client-facing document, and still distinguishes two
+    different unidentified people from each other.
+
+    Returns (segments, excerpts): excerpts maps each "Unidentified speaker
+    N" label to a short quote of what that speaker actually said. This is
+    NOT baked into the label itself (unlike the old inline-quote format) --
+    callers should persist it only in transcript.json for a human to
+    manually identify the speaker later, never in transcript_text, so it
+    never reaches Gemini or a client-facing PDF.
 
     A "Speaker N" group is one real diarization cluster (one person, within
     the scope diarize.py minted that label in -- the whole meeting for the
     legacy path, one chunk for the chunked path's fallback branch -- see
     diarize_chunk()'s chunk-tagging), so every segment in that group shares
-    ONE excerpt label. "Unknown" segments are diarize.py's own no-overlap
-    case -- not reliably the same person from one to the next -- so each
-    "Unknown" segment gets its OWN independent excerpt label rather than
-    being merged with other "Unknown" segments into one (possibly wrong)
-    identity.
+    ONE label (and one excerpt). "Unknown" segments are diarize.py's own
+    no-overlap case -- not reliably the same person from one to the next --
+    so each "Unknown" segment gets its OWN independent label/excerpt rather
+    than being merged with other "Unknown" segments into one (possibly
+    wrong) identity.
     """
     group_texts: dict[str, list[str]] = {}
     for seg in segments:
         if is_placeholder_speaker(seg.speaker) and seg.speaker != "Unknown":
             group_texts.setdefault(seg.speaker, []).append(seg.text)
 
-    group_labels = {placeholder: _make_excerpt_label(texts) for placeholder, texts in group_texts.items()}
+    counter = 0
+    group_labels: dict[str, str] = {}
+    excerpts: dict[str, str] = {}
+    for placeholder, texts in group_texts.items():
+        counter += 1
+        label = f"Unidentified speaker {counter}"
+        group_labels[placeholder] = label
+        excerpts[label] = _make_excerpt(texts)
 
     result = []
     for seg in segments:
         if seg.speaker == "Unknown":
-            result.append(replace(seg, speaker=_make_excerpt_label([seg.text])))
+            counter += 1
+            label = f"Unidentified speaker {counter}"
+            excerpts[label] = _make_excerpt([seg.text])
+            result.append(replace(seg, speaker=label))
         elif seg.speaker in group_labels:
             result.append(replace(seg, speaker=group_labels[seg.speaker]))
         else:
             result.append(seg)
-    return result
+    return result, excerpts

@@ -28,6 +28,11 @@ const STATE_KEYS = [
   "pendingTitle",
   "recordingStartedAtMs",
   "speakerEvents",
+  // Accumulated People-panel attendee names from content_script.js's
+  // periodic roster scrape -- a deduped list of plain name strings (not
+  // timestamped like speakerEvents, since Meet's panel doesn't expose a
+  // join time, just current membership).
+  "attendeeRoster",
   // The chunked/streaming pipeline's run id, obtained from POST
   // /meetings/start before capture begins -- same restart-survival
   // rationale as every other entry here: offscreen.js needs it on every
@@ -45,6 +50,7 @@ async function getState() {
     pendingTitle: stored.pendingTitle ?? null,
     recordingStartedAtMs: stored.recordingStartedAtMs ?? null,
     speakerEvents: stored.speakerEvents ?? [],
+    attendeeRoster: stored.attendeeRoster ?? [],
     runId: stored.runId ?? null,
   };
 }
@@ -196,6 +202,7 @@ async function startRecording(tabId, title) {
       runId,
       recordingStartedAtMs: Date.now(),
       speakerEvents: [],
+      attendeeRoster: [],
     });
     chrome.action.setBadgeText({ text: "REC" });
     chrome.action.setBadgeBackgroundColor({ color: "#c0392b" });
@@ -228,11 +235,12 @@ async function stopRecording() {
   const { activeTabId, runId } = await getState();
   if (activeTabId === null) return { ok: false, reason: "not recording" };
   const tabId = activeTabId;
-  // No speakerEvents passed here -- offscreen.js already has runId from
-  // START_RECORDING, and pulls a fresh speakerEvents snapshot via
-  // GET_SPEAKER_EVENTS_SNAPSHOT right before every chunk/finalize upload
-  // (including this terminal one), so it's always current as of the
-  // actual upload moment rather than a possibly-stale value passed here.
+  // No speakerEvents/attendeeRoster passed here -- offscreen.js already has
+  // runId from START_RECORDING, and pulls a fresh snapshot of each via
+  // GET_SPEAKER_EVENTS_SNAPSHOT/GET_ROSTER_SNAPSHOT right before every
+  // chunk/finalize upload (including this terminal one), so it's always
+  // current as of the actual upload moment rather than a possibly-stale
+  // value passed here.
   let result;
   try {
     result = await chrome.runtime.sendMessage({ target: "offscreen", type: "STOP_RECORDING" });
@@ -251,6 +259,7 @@ async function stopRecording() {
     runId: null,
     recordingStartedAtMs: null,
     speakerEvents: [],
+    attendeeRoster: [],
   });
   chrome.action.setBadgeText({ text: "" });
 
@@ -364,6 +373,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       }
     })();
     return;
+  }
+  if (message.type === "ROSTER_UPDATE") {
+    // From content_script.js's periodic People-panel scrape. Merges into
+    // the accumulated roster (union, first-seen order) rather than
+    // replacing it -- a later scrape may see fewer rows than an earlier one
+    // (e.g. the panel briefly rendered incompletely), and a name once seen
+    // should never be lost for the rest of the meeting.
+    (async () => {
+      const { activeTabId, attendeeRoster } = await getState();
+      if (activeTabId !== null && sender.tab && sender.tab.id === activeTabId) {
+        const merged = [...attendeeRoster];
+        const seen = new Set(merged.map((n) => n.toLowerCase()));
+        for (const name of message.names || []) {
+          const key = name.toLowerCase();
+          if (!seen.has(key)) {
+            seen.add(key);
+            merged.push(name);
+          }
+        }
+        await setState({ attendeeRoster: merged });
+      }
+    })();
+    return;
+  }
+  if (message.type === "GET_ROSTER_SNAPSHOT") {
+    // Pulled by offscreen.js right before every chunk/finalize upload, same
+    // pattern as GET_SPEAKER_EVENTS_SNAPSHOT.
+    getState().then(({ attendeeRoster }) => {
+      sendResponse({ attendeeRoster });
+    });
+    return true;
   }
   if (message.type === "MANUAL_START") {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {

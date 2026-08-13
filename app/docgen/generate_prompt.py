@@ -1,12 +1,20 @@
-_GROUNDING_RULE = """Ground everything strictly in the extracted facts and transcript
+from app.docgen.extract_prompt import LANGUAGE_RULE
+
+_GROUNDING_RULE = f"""Ground everything strictly in the extracted facts and transcript
 excerpts you are given below. Never invent a name, date, number, decision, or action
-item that is not present there. If a section of the document has no supporting
-material, write "Not discussed in this meeting" for that section instead of
+item that is not present there. A `meeting_date` field is provided in the grounding
+data -- use it verbatim wherever a meeting date/time is needed; never infer or extract
+a date from transcript content. An `attendees` field in the grounding data is the
+authoritative attendee list for this meeting -- always use it verbatim for the
+Attendees/overview field; never compute your own list from who spoke in the
+transcript, and never drop a name from it. If a section of the document has no
+supporting material, write "Not discussed in this meeting" for that section instead of
 inventing content to fill it. Some speaker labels in the transcript are not a real
-name -- they look like `Unidentified speaker ("a few words they actually said")`. This
-means their name could not be confidently identified. Copy that entire label exactly
-as it appears, verbatim, every time you reference that speaker -- never shorten it,
-never paraphrase it, and never invent a plausible-sounding real name to replace it."""
+name -- they look like `Unidentified speaker 1`, `Unidentified speaker 2`, etc. This
+means their name could not be confidently identified. Copy each such label exactly as
+it appears, verbatim (including its number), every time you reference that speaker --
+never shorten it, never merge two different numbers together, and never invent a
+plausible-sounding real name to replace it. {LANGUAGE_RULE}"""
 
 MOM_SYSTEM_PROMPT = f"""You are the Minutes-of-Meeting writer for Sarathi Meeting Bot.
 Write clear, professional meeting minutes from the extracted facts and transcript

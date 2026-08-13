@@ -132,7 +132,7 @@ def test_is_placeholder_speaker():
     assert is_placeholder_speaker("Speaker 1")
     assert is_placeholder_speaker("Speaker 12 (chunk@123.4)")
     assert not is_placeholder_speaker("Priya Shah")
-    assert not is_placeholder_speaker('Unidentified speaker ("hello")')
+    assert not is_placeholder_speaker("Unidentified speaker 1")
 
 
 def test_speaker_from_dom_events_stale_event_becomes_unknown():
@@ -160,13 +160,14 @@ def test_fill_unresolved_with_excerpts_groups_same_placeholder_one_label():
         SpeakerSegment(start=5.0, end=6.0, speaker="Priya Shah", text="already resolved"),
     ]
 
-    filled = fill_unresolved_with_excerpts(segments)
+    filled, excerpts = fill_unresolved_with_excerpts(segments)
 
-    assert filled[0].speaker == filled[1].speaker
-    assert filled[0].speaker.startswith('Unidentified speaker (')
-    assert "hello everyone" in filled[0].speaker
-    assert "let's get started" in filled[0].speaker
+    assert filled[0].speaker == filled[1].speaker == "Unidentified speaker 1"
     assert filled[2].speaker == "Priya Shah"
+    assert "hello everyone" in excerpts["Unidentified speaker 1"]
+    assert "let's get started" in excerpts["Unidentified speaker 1"]
+    # The client-facing label itself must never carry the raw quote.
+    assert "hello everyone" not in filled[0].speaker
 
 
 def test_fill_unresolved_with_excerpts_each_unknown_gets_own_label():
@@ -175,24 +176,30 @@ def test_fill_unresolved_with_excerpts_each_unknown_gets_own_label():
         SpeakerSegment(start=5.0, end=6.0, speaker="Unknown", text="second unknown line"),
     ]
 
-    filled = fill_unresolved_with_excerpts(segments)
+    filled, excerpts = fill_unresolved_with_excerpts(segments)
 
     assert filled[0].speaker != filled[1].speaker
-    assert "first unknown line" in filled[0].speaker
-    assert "second unknown line" in filled[1].speaker
+    assert filled[0].speaker == "Unidentified speaker 1"
+    assert filled[1].speaker == "Unidentified speaker 2"
+    assert "first unknown line" in excerpts["Unidentified speaker 1"]
+    assert "second unknown line" in excerpts["Unidentified speaker 2"]
 
 
 def test_fill_unresolved_with_excerpts_no_placeholders_is_a_noop():
     segments = [SpeakerSegment(start=0.0, end=1.0, speaker="Priya Shah", text="hi")]
 
-    assert fill_unresolved_with_excerpts(segments) == segments
+    filled, excerpts = fill_unresolved_with_excerpts(segments)
+
+    assert filled == segments
+    assert excerpts == {}
 
 
 def test_fill_unresolved_with_excerpts_truncates_long_excerpt():
     long_text = "x" * 500
     segments = [SpeakerSegment(start=0.0, end=1.0, speaker="Speaker 1", text=long_text)]
 
-    filled = fill_unresolved_with_excerpts(segments)
+    filled, excerpts = fill_unresolved_with_excerpts(segments)
 
-    assert len(filled[0].speaker) < 200
-    assert filled[0].speaker.endswith('...")')
+    assert filled[0].speaker == "Unidentified speaker 1"
+    assert excerpts["Unidentified speaker 1"].endswith("...")
+    assert len(excerpts["Unidentified speaker 1"]) < 200

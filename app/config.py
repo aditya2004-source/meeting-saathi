@@ -40,6 +40,14 @@ class Settings(BaseSettings):
     # faster-whisper's BatchedInferencePipeline batch size -- ~2x CPU/int8
     # speedup per faster-whisper's own README benchmark.
     whisper_batch_size: int = 8
+    # "translate" runs Whisper's built-in translate-to-English decoding
+    # (no-op for already-English speech, translates any other detected
+    # language directly) instead of the default "transcribe", so bilingual
+    # Hindi/English meetings produce an English-only transcript before
+    # Gemini ever sees it. Configurable so it's a one-line revert if
+    # translation quality is ever worse than "transcribe" + Gemini-side
+    # translation for some meeting.
+    whisper_task: str = "translate"
 
     # Diarization ("who said what") — local pyannote.audio, since audio comes
     # from the Chrome extension as a single mixed recording, not per-speaker
@@ -69,6 +77,11 @@ class Settings(BaseSettings):
     # Output storage
     base_storage_dir: Path = Path.home() / "Downloads" / "Sarathi Meetings"
     keep_raw_recording: bool = False
+    # IANA timezone used to display meeting dates/times in generated
+    # documents and the dashboard -- explicit rather than relying on the
+    # server's ambient system timezone, so it's correct regardless of where
+    # this is deployed.
+    report_timezone: str = "Asia/Kolkata"
 
     # Local service
     port: int = 8420

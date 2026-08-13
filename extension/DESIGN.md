@@ -278,11 +278,59 @@ expect to revisit it when Meet's UI changes.
 - The local user's own tile is commonly labeled "You" — explicitly
   filtered out at the point of detection, since it must never be emitted
   as a "real name."
-- The requirement's "match from the participant panel" is a related but
-  distinct signal from tile captions (the panel usually isn't open during
-  a call, so requiring it would make this feature much less useful in
-  practice) — tile captions are the primary, always-available signal used
-  here.
+- The People/participant panel is a related but distinct signal from tile
+  captions — it usually isn't open during a call — so it's used separately
+  (see "Attendee roster" below), not as part of this per-utterance
+  attribution.
+
+## Attendee roster (People-panel scrape)
+
+**Goal:** the Attendees field in generated documents should list everyone
+who actually joined the meeting, including people who never spoke —
+speaker-name detection above can only ever see someone who spoke, so a
+quiet participant is otherwise invisible end-to-end. Real client meeting:
+7 people joined, but the generated MOM's Attendees list was missing anyone
+who didn't get picked up by tile-speaking-indicator scraping.
+
+**How it works:**
+1. `startRosterScraper()` (in `content_script.js`), gated the same way as
+   the speaker observer (`recordingActive`), periodically calls
+   `scrapeRoster()` — once ~10s after recording starts, then every ~4
+   minutes.
+2. `scrapeRoster()` finds Meet's People-panel toggle button
+   (`findPeoplePanelToggleButton()`), briefly opens the panel if it isn't
+   already open, reads every row via `readPeoplePanelRoster()` (filtering
+   known non-name UI strings — "You", "Meeting host", "Contributors",
+   etc.), then restores whatever open/closed state it found the panel in
+   (never closes a panel the user opened themselves). This causes a brief
+   (~400ms) visible flash of the panel if it wasn't already open — an
+   accepted UX tradeoff, confirmed with the user, in exchange for reliably
+   capturing silent attendees.
+3. New names are sent via a `ROSTER_UPDATE {names, atMs}` message;
+   `background.js` merges them (union, first-seen order, case-insensitive
+   dedup) into `attendeeRoster` in `chrome.storage.session`; `offscreen.js`
+   attaches the current accumulated roster as an `attendee_roster` JSON
+   field on every chunk/finalize upload, same full-snapshot-every-time
+   convention as `speaker_events`.
+4. The backend (`app/pipeline/roster.py`) treats this roster as the
+   authoritative "who was there" list — combined with any additionally-
+   detected real speaker name not already on it — rather than deriving
+   Attendees purely from who spoke in the transcript.
+
+**Known fragility, called out explicitly rather than silently assumed:**
+- Same caveat as speaker-name detection above: Meet's People-panel
+  structure/class names are not a stable API and can change across
+  releases — `findPeoplePanelToggleButton()`/`readPeoplePanelRoster()`
+  need re-verification against a live multi-participant call before being
+  fully trusted.
+- If the toggle button can't be found at all, this silently falls back to
+  a passive read (only picks up a roster if the user already has the panel
+  open themselves) rather than failing loudly — consistent with this
+  extension's "best-effort, never block the recording" philosophy.
+- Doesn't attempt to detect "near the meeting's end" to force one final
+  scrape — relies on the periodic ~4-minute cadence alone, which is a
+  reasonable simplification for meetings of typical length but could in
+  principle miss someone who joined and left entirely within one interval.
 
 ## Chunked upload: MediaRecorder restart-cycling
 

@@ -155,6 +155,15 @@ async function fetchSpeakerEventsSnapshot() {
   }
 }
 
+async function fetchRosterSnapshot() {
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "GET_ROSTER_SNAPSHOT" });
+    return (response && response.attendeeRoster) || [];
+  } catch {
+    return [];
+  }
+}
+
 const UPLOAD_MAX_ATTEMPTS = 3;
 const UPLOAD_BACKOFF_MS = [1000, 3000, 9000];
 
@@ -163,6 +172,7 @@ async function uploadChunk(sequenceNumber, blob, isFinal, attempt = 1) {
     ? `${SERVER_BASE_URL}/meetings/${runId}/finalize`
     : `${SERVER_BASE_URL}/meetings/${runId}/chunk`;
   const speakerEvents = await fetchSpeakerEventsSnapshot();
+  const attendeeRoster = await fetchRosterSnapshot();
 
   const formData = new FormData();
   formData.append("sequence", String(sequenceNumber));
@@ -172,6 +182,10 @@ async function uploadChunk(sequenceNumber, blob, isFinal, attempt = 1) {
   // meeting's worth of speaker-change events is at most a few hundred
   // entries), plus it's safely idempotent if this same chunk gets retried.
   formData.append("speaker_events", JSON.stringify(speakerEvents));
+  // Same full-snapshot-every-time convention -- the accumulated People-panel
+  // roster as of this upload moment, overwriting attendee_roster.json
+  // server-side with the freshest version each time.
+  formData.append("attendee_roster", JSON.stringify(attendeeRoster));
 
   try {
     const response = await fetch(url, { method: "POST", body: formData });
