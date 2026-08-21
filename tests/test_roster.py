@@ -65,3 +65,20 @@ def test_compute_attendees_no_roster_falls_back_to_spoken_names_only():
     segments = [SpeakerSegment(start=0.0, end=1.0, speaker="Priya Shah", text="hi")]
 
     assert compute_attendees([], segments) == ["Priya Shah"]
+
+
+def test_parse_attendee_roster_dedupes_name_variants():
+    # Different scrapes of the same real person commonly differ in casing,
+    # whitespace, or carry a "(Host)"/"(You)" suffix -- these must collapse
+    # to one attendee, not be treated as distinct people (the direct cause
+    # of an inflated attendee count).
+    raw = '["Priya Shah", "priya  shah", "Priya Shah (Host)"]'
+
+    assert parse_attendee_roster(raw) == ["Priya Shah"]
+
+
+def test_compute_attendees_dedupes_roster_and_spoken_name_variants():
+    roster = ["Priya Shah (Host)"]
+    segments = [SpeakerSegment(start=0.0, end=1.0, speaker="priya shah", text="hi")]
+
+    assert compute_attendees(roster, segments) == ["Priya Shah (Host)"]

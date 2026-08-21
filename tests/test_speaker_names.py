@@ -85,7 +85,14 @@ def test_resolve_speaker_names_never_touches_unknown():
     assert resolved[0].speaker == "Unknown"
 
 
-def test_resolve_speaker_names_collision_keeps_stronger_group_only():
+def test_resolve_speaker_names_collision_merges_both_groups():
+    # Two placeholder groups both confidently voting for the same real name
+    # are merged under it -- this is the common over-segmentation case
+    # (pyannote/AssemblyAI split one person's voice into two diarization
+    # clusters, e.g. across a pause), not two different people coincidentally
+    # sharing a name. Previously only the stronger-voted group won the name
+    # and the other was left as a stray "Unidentified speaker N" for the
+    # same real person.
     segments = [
         SpeakerSegment(start=0.0, end=1.0, speaker="Speaker 1", text="a"),
         SpeakerSegment(start=10.0, end=11.0, speaker="Speaker 2", text="b"),
@@ -96,14 +103,32 @@ def test_resolve_speaker_names_collision_keeps_stronger_group_only():
         SpeakerEvent("Priya Shah", 0.4),
         SpeakerEvent("Priya Shah", 0.6),
         # Speaker 2's group: 1 event, also "Priya Shah" -> weaker signal,
-        # but a plausible name collision (e.g. mis-clustering).
+        # but independently confident (votes/total == 1.0) -- the same
+        # person, split into a second diarization cluster.
         SpeakerEvent("Priya Shah", 10.2),
     ]
 
     resolved = resolve_speaker_names(segments, events)
 
     assert resolved[0].speaker == "Priya Shah"
-    assert resolved[1].speaker == "Speaker 2"
+    assert resolved[1].speaker == "Priya Shah"
+
+
+def test_resolve_speaker_names_normalizes_votes_across_name_variants():
+    # DOM-scraped events for the same real person can differ in whitespace,
+    # casing, or carry a "(Host)"/"(You)" suffix depending on which scrape
+    # captured them -- these must combine into one vote, not fragment and
+    # each fall below min_confidence individually.
+    segments = [SpeakerSegment(start=0.0, end=2.0, speaker="Speaker 1", text="a")]
+    events = [
+        SpeakerEvent("Priya Shah", 0.2),
+        SpeakerEvent("priya  shah", 0.4),
+        SpeakerEvent("Priya Shah (Host)", 0.6),
+    ]
+
+    resolved = resolve_speaker_names(segments, events)
+
+    assert resolved[0].speaker == "Priya Shah"
 
 
 def test_resolve_speaker_names_never_touches_already_real_names():

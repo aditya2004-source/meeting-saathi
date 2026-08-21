@@ -7,6 +7,7 @@ never spoke. Pure functions, no I/O -- callers are responsible for reading
 the sidecar file.
 """
 import json
+import re
 
 from app.pipeline.diarize import SpeakerSegment
 from app.pipeline.speaker_names import is_placeholder_speaker
@@ -15,6 +16,26 @@ from app.pipeline.speaker_names import is_placeholder_speaker
 # is commonly labeled "You" in Meet's UI, and the same applies to People
 # panel rows.
 _IGNORED_NAMES = {"you"}
+
+# Strips a trailing role/status parenthetical Meet sometimes appends to an
+# otherwise-real name (e.g. "Aditya Choudhary (You)", "Priya (Host)") --
+# used only to build a comparison key, never to change the stored/displayed
+# name itself.
+_TRAILING_PAREN_RE = re.compile(r"\s*\([^()]*\)\s*$")
+
+
+def normalize_key(name: str) -> str:
+    """Comparison key for "is this the same person" -- trims, collapses
+    internal whitespace, strips one trailing parenthetical (role/status
+    suffix), and casefolds. Two DOM scrapes of the same real person often
+    produce slightly different strings (extra whitespace, a "(You)"/"(Host)"
+    suffix, different casing); exact-match dedup treats each as a distinct
+    person, which is the direct cause of an inflated attendee count. This
+    key is for comparison only -- never used as the displayed name.
+    """
+    collapsed = " ".join(name.split())
+    stripped = _TRAILING_PAREN_RE.sub("", collapsed).strip()
+    return (stripped or collapsed).casefold()
 
 
 def parse_attendee_roster(raw_json: str) -> list[str]:
@@ -45,7 +66,7 @@ def parse_attendee_roster(raw_json: str) -> list[str]:
         if not isinstance(name, str) or not name.strip():
             continue
         cleaned = name.strip()
-        key = cleaned.lower()
+        key = normalize_key(cleaned)
         if key in _IGNORED_NAMES or key in seen:
             continue
         seen.add(key)
@@ -61,13 +82,13 @@ def compute_attendees(roster: list[str], segments: list[SpeakerSegment]) -> list
     call this BEFORE fill_unresolved_with_excerpts() turns those into
     "Unidentified speaker N" labels, which also must never appear here.
     """
-    seen = {name.lower() for name in roster}
+    seen = {normalize_key(name) for name in roster}
     extra: list[str] = []
     for seg in segments:
         name = seg.speaker
         if is_placeholder_speaker(name):
             continue
-        key = name.lower()
+        key = normalize_key(name)
         if key in seen:
             continue
         seen.add(key)

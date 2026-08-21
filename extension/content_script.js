@@ -17,6 +17,103 @@ let pendingSpeakerName = null;
 let pendingSpeakerTimer = null;
 const SPEAKING_INDICATOR_MIN_DURATION_MS = 300;
 
+// The local user's own real name, learned from a People-panel roster row
+// whose text ends in "(You)" (see readPeoplePanelRoster()/scrapeRoster()
+// below). Meet's tile-speaking indicator only ever exposes "You" for the
+// local user's own tile -- without this, the local user's own turns are
+// silently dropped instead of attributed to a real name (see
+// findActiveSpeakerName() below).
+let localUserRealName = null;
+
+// Status/badge text Meet commonly renders as a leaf node alongside (and
+// sometimes before) a participant's actual name -- e.g. avatar initials,
+// a presenting/mute/pin/raised-hand indicator, or a bare role label. None
+// of these are ever a person's name; used by pickNameFromCandidates()
+// below to avoid mistaking one for the name itself. Deliberately does NOT
+// include "you" -- callers (findActiveSpeakerName(), readPeoplePanelRoster())
+// need to see that literal value to detect the local user's own
+// tile/row and substitute their real name, rather than have it silently
+// discarded here.
+const NAME_CANDIDATE_IGNORE_RE =
+  /^(meeting host|contributors|in this meeting|in the meeting|waiting to join|add others|more options|people|mute all|muted|unmuted|mute|unmute|presenting|pinned|unpinned|pin|unpin|spotlighted|raised hand|hand raised|calling|ringing|host|co-host|verified|[a-z]{1,3})$/i;
+
+// Strips one trailing role/status parenthetical Meet sometimes appends to
+// an otherwise-real name (e.g. "Aditya Choudhary (You)", "Priya (Host)").
+const NAME_TRAILING_SUFFIX_RE = /\s*\((you|host|co-host|presenting)\)\s*$/i;
+
+function stripNameSuffix(raw) {
+  return raw.replace(NAME_TRAILING_SUFFIX_RE, "").trim();
+}
+
+// Comparison key for "is this the same person" -- mirrors
+// app/pipeline/roster.py's normalize_key() (duplicated rather than shared
+// across languages). Two scrapes of the same real person often produce
+// slightly different strings (extra whitespace, a "(You)"/"(Host)" suffix,
+// different casing); exact-match dedup treats each as a distinct person,
+// which is what inflated the attendee count before this fix. Comparison
+// only -- never used as the stored/displayed name.
+function normalizeKey(name) {
+  return stripNameSuffix(name.split(/\s+/).filter(Boolean).join(" ")).toLowerCase();
+}
+
+// Picks the most name-shaped candidate out of a list of raw leaf-text
+// strings found inside one participant row/tile, instead of blindly
+// trusting whichever happens to appear first in the DOM (the previous
+// approach, which was inconsistent across re-scrapes whenever a badge/
+// status leaf rendered before the actual name). Prefers text containing a
+// space (real names are usually first+last) over single-word text, and
+// rejects known non-name status/badge tokens entirely.
+function pickNameFromCandidates(rawTexts) {
+  let best = null;
+  for (const raw of rawTexts) {
+    const trimmed = raw?.trim();
+    if (!trimmed) continue;
+    // "you" is a special case, not a status/badge token: it's the literal
+    // value Meet renders for the local user's own tile/row, and callers
+    // rely on seeing it (rather than having it discarded here) to detect
+    // that and substitute the local user's real name. Every other bare
+    // short/status token is still rejected below.
+    const isYou = trimmed.toLowerCase() === "you";
+    if (!isYou && NAME_CANDIDATE_IGNORE_RE.test(trimmed)) continue;
+    if (!best) {
+      best = trimmed;
+      continue;
+    }
+    const bestHasSpace = best.includes(" ");
+    const candidateHasSpace = trimmed.includes(" ");
+    if (candidateHasSpace && !bestHasSpace) best = trimmed;
+  }
+  return best ? stripNameSuffix(best) : null;
+}
+
+// Picks a name out of one row/tile element: prefers its own aria-label
+// (Meet commonly puts the full accessible name there, sometimes with a
+// trailing status clause like ", presenting" -- stripped below) over
+// scanning leaf text nodes, since an aria-label is far less likely to be a
+// stray badge/status string than an arbitrarily-ordered child leaf.
+function pickNameFromElement(el) {
+  const ariaLabel = el.getAttribute?.("aria-label")?.trim();
+  if (ariaLabel) {
+    // Meet's aria-labels are often "<name> is speaking" or "<name>,
+    // presenting"/"muted"/"pinned" -- strip the trailing status clause
+    // (comma- or space-joined) so only the name itself remains. The
+    // "is speaking" case matters here specifically: the tile-speaking
+    // indicator elements this function is called on are found via
+    // `[aria-label*="is speaking" i]`, so their own aria-label commonly
+    // carries exactly that suffix.
+    const withoutStatusClause = ariaLabel
+      .replace(/\s+is speaking\s*$/i, "")
+      .replace(/,\s*(presenting|muted|unmuted|pinned).*$/i, "")
+      .trim();
+    const fromAria = pickNameFromCandidates([withoutStatusClause]);
+    if (fromAria) return fromAria;
+  }
+  const leafTexts = Array.from(el.querySelectorAll?.("span, div") || [])
+    .filter((leaf) => leaf.children.length === 0)
+    .map((leaf) => leaf.textContent);
+  return pickNameFromCandidates(leafTexts);
+}
+
 // People-panel attendee roster scrape (best-effort, only runs while a
 // recording is in progress -- see extension/DESIGN.md). The speaking-
 // indicator scrape above only ever sees someone who actually spoke; a
@@ -32,8 +129,6 @@ let sentRosterNames = new Set();
 const ROSTER_SCRAPE_INTERVAL_MS = 4 * 60 * 1000; // every ~4 minutes
 const ROSTER_SCRAPE_INITIAL_DELAY_MS = 10 * 1000; // ~10s after recording starts
 const ROSTER_PANEL_SETTLE_MS = 400; // let the panel render rows after opening
-const ROSTER_IGNORED_TEXT_RE =
-  /^(you|meeting host|contributors|in this meeting|in the meeting|waiting to join|add others|more options|people|mute all)$/i;
 
 function getMeetingTitle() {
   // Meet's document.title is usually "Meet - <name or code>", or just "Meet"
@@ -112,15 +207,23 @@ function findActiveSpeakerName() {
       indicator;
     const explicitName =
       tile.getAttribute?.("data-self-name") || tile.getAttribute?.("data-participant-name");
-    const nameEl =
-      tile.querySelector?.("[data-self-name], [data-participant-name]") ||
-      Array.from(tile.querySelectorAll?.("span, div") || []).find(
-        (el) => el.children.length === 0 && el.textContent?.trim()
-      );
-    const name = (explicitName || nameEl?.textContent || "").trim();
+    const name = (explicitName && explicitName.trim()) || pickNameFromElement(tile);
+    if (!name) {
+      console.debug("[Sarathi] findActiveSpeakerName: no name-shaped candidate in tile", tile);
+      continue;
+    }
     // The local user's own tile is commonly labeled "You" -- never a real
-    // name, must never be emitted.
-    if (name && name.toLowerCase() !== "you") return name;
+    // name to emit as-is. Substitute the real name learned from the
+    // People-panel roster scrape (see localUserRealName above) if it's
+    // known yet; otherwise skip this indicator entirely rather than
+    // silently misattributing the local user's speech to whoever spoke
+    // last (the previous behavior).
+    if (name.toLowerCase() === "you") {
+      if (localUserRealName) return localUserRealName;
+      console.debug("[Sarathi] findActiveSpeakerName: local user speaking, real name not yet known");
+      continue;
+    }
+    return name;
   }
   return null;
 }
@@ -204,12 +307,25 @@ function readPeoplePanelRoster() {
   const names = [];
   const seen = new Set();
   for (const row of rows) {
-    const nameEl = Array.from(row.querySelectorAll("span, div")).find(
-      (el) => el.children.length === 0 && el.textContent?.trim()
-    );
-    const raw = (nameEl?.textContent || "").trim();
-    if (!raw || ROSTER_IGNORED_TEXT_RE.test(raw)) continue;
-    const key = raw.toLowerCase();
+    const raw = pickNameFromElement(row);
+    if (!raw || raw.toLowerCase() === "you") {
+      // Bare "You" (no name alongside it) isn't a usable attendee entry --
+      // Meet's People panel normally shows the local user's full name with
+      // a "(You)" suffix (handled below), this only guards the rare case
+      // where nothing else was found in the row.
+      if (!raw) console.debug("[Sarathi] readPeoplePanelRoster: no name-shaped candidate in row", row);
+      continue;
+    }
+
+    // This row's un-stripped text carries a "(You)" suffix -- it's the
+    // local user's own row. Remember their real (suffix-stripped) name so
+    // findActiveSpeakerName() above can substitute it whenever the local
+    // user's tile is the one speaking, instead of silently dropping those
+    // turns.
+    const rowText = row.getAttribute?.("aria-label")?.trim() || row.textContent || "";
+    if (/\(you\)/i.test(rowText)) localUserRealName = raw;
+
+    const key = normalizeKey(raw);
     if (seen.has(key)) continue;
     seen.add(key);
     names.push(raw);
@@ -218,9 +334,9 @@ function readPeoplePanelRoster() {
 }
 
 function sendRosterUpdate(names) {
-  const fresh = names.filter((n) => !sentRosterNames.has(n.toLowerCase()));
+  const fresh = names.filter((n) => !sentRosterNames.has(normalizeKey(n)));
   if (fresh.length === 0) return;
-  fresh.forEach((n) => sentRosterNames.add(n.toLowerCase()));
+  fresh.forEach((n) => sentRosterNames.add(normalizeKey(n)));
   // Sends the full current roster each time (not just the new names) --
   // background.js keeps the latest snapshot, so a name dropping off Meet's
   // panel between scrapes (e.g. it briefly failed to render) doesn't lose

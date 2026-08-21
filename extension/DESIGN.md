@@ -249,7 +249,15 @@ expect to revisit it when Meet's UI changes.
 1. `findActiveSpeakerName()` (in `content_script.js`) looks for an element
    whose class/attributes mention "speaking" (Meet's visual indicator for
    the actively-talking participant's tile), then reads the name label
-   from that tile.
+   from that tile via `pickNameFromElement()` — prefers the tile's own
+   `aria-label` (stripping a trailing status clause like `"is speaking"`/
+   `", presenting"`) over scanning child leaf text nodes; when it does fall
+   back to leaf text, `pickNameFromCandidates()` picks the best-looking
+   candidate (prefers text containing a space, rejects known status/badge
+   tokens like initials, "muted", "presenting") rather than blindly
+   trusting whichever leaf happens to render first in the DOM — the
+   original "first leaf" approach was confirmed (via real-meeting testing)
+   to sometimes grab a badge/status leaf instead of the actual name.
 2. `onPossibleSpeakerChange()` debounces state changes (300ms minimum
    hold) via a `MutationObserver`, so DOM flicker/reflow doesn't produce
    noisy events, and sends a `SPEAKER_ACTIVE {name, atMs}` message on each
@@ -263,21 +271,36 @@ expect to revisit it when Meet's UI changes.
    `speaker_events` JSON field on the upload.
 5. The backend (`app/pipeline/speaker_names.py`, see
    `../app/pipeline/DESIGN.md`) majority-votes a real name per diarization
-   cluster from this timeline, falling back to the existing "Speaker N"
-   placeholder when there's no confident match.
+   cluster from this timeline (normalizing name variants — casing,
+   whitespace, a `"(Host)"`/`"(You)"` suffix — to the same vote bucket, so
+   they don't fragment below the confidence threshold), falling back to
+   the existing "Speaker N" placeholder when there's no confident match.
+   When multiple diarization clusters independently vote confidently for
+   the same real name — common when pyannote/AssemblyAI over-segment one
+   person's voice across a pause or a chunk boundary — all of them are
+   merged under that name, rather than only the strongest-voted cluster
+   winning it (the old behavior left the other clusters as stray
+   "Unidentified speaker N" entries for a person who *was* identified).
 
 **Known fragility, called out explicitly rather than silently assumed:**
 - Meet's class names are obfuscated/version-dependent — this needs
   re-verification against a live call (open devtools, speak, confirm what
   actually toggles) whenever Meet's UI changes, and can silently stop
-  working with no error, just a quiet fallback to "Speaker N".
+  working with no error, just a quiet fallback to "Speaker N". A handful
+  of `console.debug("[Sarathi] ...")` lines at the extraction decision
+  points exist specifically so a real test's DevTools console can show
+  what's actually being seen/rejected, rather than guessing again.
 - Screen-share mode reflows/shrinks tiles and may hide the indicator
   entirely for a large chunk of a client meeting.
 - Large participant counts virtualize off-screen tiles — those
   participants can never be matched this way. Expected, not a bug.
-- The local user's own tile is commonly labeled "You" — explicitly
-  filtered out at the point of detection, since it must never be emitted
-  as a "real name."
+- The local user's own tile is commonly labeled just "You", with no name
+  text alongside it. `findActiveSpeakerName()` substitutes
+  `localUserRealName` (learned from a `"(You)"`-suffixed row the People-
+  panel roster scrape below already captured) when it's known, instead of
+  silently dropping the local user's turns — previously, dropping them let
+  `speaker_from_dom_events()`'s carry-forward semantics misattribute the
+  local user's speech to whoever spoke last.
 - The People/participant panel is a related but distinct signal from tile
   captions — it usually isn't open during a call — so it's used separately
   (see "Attendee roster" below), not as part of this per-utterance
@@ -299,30 +322,43 @@ who didn't get picked up by tile-speaking-indicator scraping.
    minutes.
 2. `scrapeRoster()` finds Meet's People-panel toggle button
    (`findPeoplePanelToggleButton()`), briefly opens the panel if it isn't
-   already open, reads every row via `readPeoplePanelRoster()` (filtering
-   known non-name UI strings — "You", "Meeting host", "Contributors",
-   etc.), then restores whatever open/closed state it found the panel in
-   (never closes a panel the user opened themselves). This causes a brief
-   (~400ms) visible flash of the panel if it wasn't already open — an
-   accepted UX tradeoff, confirmed with the user, in exchange for reliably
-   capturing silent attendees.
-3. New names are sent via a `ROSTER_UPDATE {names, atMs}` message;
-   `background.js` merges them (union, first-seen order, case-insensitive
-   dedup) into `attendeeRoster` in `chrome.storage.session`; `offscreen.js`
+   already open, reads every row via `readPeoplePanelRoster()` — each row's
+   name comes from the same `pickNameFromElement()`/
+   `pickNameFromCandidates()` helper described above (prefers `aria-label`,
+   otherwise the best-looking leaf, rejecting badge/status text), then
+   strips a trailing `"(You)"`/`"(Host)"` role suffix — then restores
+   whatever open/closed state it found the panel in (never closes a panel
+   the user opened themselves). This causes a brief (~400ms) visible flash
+   of the panel if it wasn't already open — an accepted UX tradeoff,
+   confirmed with the user, in exchange for reliably capturing silent
+   attendees. A row whose un-stripped text carries `"(You)"` also updates
+   `localUserRealName` (used by speaker-name detection above).
+3. New names are deduped and sent via a `ROSTER_UPDATE {names, atMs}`
+   message using `normalizeKey()` — trims, collapses whitespace, strips a
+   trailing role suffix, casefolds — as the comparison key rather than raw
+   case-insensitive equality; two scrapes of the same real person
+   otherwise commonly produce slightly different-looking strings (a
+   `"(Host)"` suffix on one pass but not another, extra whitespace, a
+   different capture of leaf-vs-aria-label text) that would previously
+   each be added as a "new" attendee. `background.js` merges them into
+   `attendeeRoster` in `chrome.storage.session` using the same
+   `normalizeKey()` (union, first-seen display string kept); `offscreen.js`
    attaches the current accumulated roster as an `attendee_roster` JSON
    field on every chunk/finalize upload, same full-snapshot-every-time
    convention as `speaker_events`.
 4. The backend (`app/pipeline/roster.py`) treats this roster as the
    authoritative "who was there" list — combined with any additionally-
-   detected real speaker name not already on it — rather than deriving
-   Attendees purely from who spoke in the transcript.
+   detected real speaker name not already on it (also matched via the
+   equivalent Python `normalize_key()`) — rather than deriving Attendees
+   purely from who spoke in the transcript.
 
 **Known fragility, called out explicitly rather than silently assumed:**
 - Same caveat as speaker-name detection above: Meet's People-panel
   structure/class names are not a stable API and can change across
   releases — `findPeoplePanelToggleButton()`/`readPeoplePanelRoster()`
   need re-verification against a live multi-participant call before being
-  fully trusted.
+  fully trusted. The same `console.debug("[Sarathi] ...")` instrumentation
+  applies here.
 - If the toggle button can't be found at all, this silently falls back to
   a passive read (only picks up a roster if the user already has the panel
   open themselves) rather than failing loudly — consistent with this
@@ -331,6 +367,13 @@ who didn't get picked up by tile-speaking-indicator scraping.
   scrape — relies on the periodic ~4-minute cadence alone, which is a
   reasonable simplification for meetings of typical length but could in
   principle miss someone who joined and left entirely within one interval.
+- Normalization collapses whitespace/casing/role-suffix variants, but is
+  not fuzzy matching — a genuinely different-looking capture of the same
+  person (e.g. a tile-scrape truncated name vs. the People-panel's full
+  name) can still slip through as two entries. Confirmed reduced, not
+  eliminated, by this fix; if it's still visibly happening after a real
+  test, the debug logging above is how to get real DOM data to refine
+  `pickNameFromElement()` further instead of guessing again.
 
 ## Chunked upload: MediaRecorder restart-cycling
 

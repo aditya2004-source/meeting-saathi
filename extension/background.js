@@ -5,6 +5,23 @@
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 const SERVER_BASE_URL = "http://localhost:8420";
 
+// Comparison key for "is this the same person" -- mirrors
+// content_script.js's/app/pipeline/roster.py's own normalizeKey()/
+// normalize_key() (duplicated rather than shared). Two roster scrapes of
+// the same real person can produce slightly different strings (extra
+// whitespace, a "(You)"/"(Host)" suffix, different casing); exact-match
+// dedup treated each as a distinct person, inflating the attendee count.
+// Comparison only -- never used as the stored/displayed name.
+function normalizeKey(name) {
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .join(" ")
+    .replace(/\s*\((you|host|co-host|presenting)\)\s*$/i, "")
+    .trim()
+    .toLowerCase();
+}
+
 // MV3 service workers are NOT persistent -- Chrome kills this script after
 // ~30s of idle time and restarts it fresh on the next event, wiping any
 // plain `let` variables back to their initial values. A real meeting
@@ -384,9 +401,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       const { activeTabId, attendeeRoster } = await getState();
       if (activeTabId !== null && sender.tab && sender.tab.id === activeTabId) {
         const merged = [...attendeeRoster];
-        const seen = new Set(merged.map((n) => n.toLowerCase()));
+        const seen = new Set(merged.map((n) => normalizeKey(n)));
         for (const name of message.names || []) {
-          const key = name.toLowerCase();
+          const key = normalizeKey(name);
           if (!seen.has(key)) {
             seen.add(key);
             merged.push(name);

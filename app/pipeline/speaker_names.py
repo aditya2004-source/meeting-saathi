@@ -16,6 +16,20 @@ from app.pipeline.transcribe import TranscribedSegment
 # a real name, must never win a group.
 _IGNORED_NAMES = {"you"}
 
+# Mirrors roster.py's own normalize_key() -- duplicated rather than shared
+# across the two pure-function modules, same convention as _IGNORED_NAMES
+# above already being duplicated. Strips one trailing role/status
+# parenthetical and casefolds, so DOM-scrape variants of the same real
+# name ("Priya", "Priya (Host)", extra whitespace, different casing) count
+# as one vote instead of fragmenting across several.
+_TRAILING_PAREN_RE = re.compile(r"\s*\([^()]*\)\s*$")
+
+
+def _normalize_key(name: str) -> str:
+    collapsed = " ".join(name.split())
+    stripped = _TRAILING_PAREN_RE.sub("", collapsed).strip()
+    return (stripped or collapsed).casefold()
+
 # Matches diarize.py's own placeholder shapes: plain "Speaker 1" (legacy
 # whole-file diarize(), and chunked diarize_chunk() before per-chunk
 # tagging) and the chunk-tagged "Speaker 1 (chunk@123.4)" form
@@ -103,8 +117,15 @@ def resolve_speaker_names(
             continue
         groups.setdefault(seg.speaker, []).append(seg)
 
-    # placeholder -> (winning_name, votes_for_winner, total_matched_events)
-    candidates: dict[str, tuple[str, int, int]] = {}
+    # Vote-count by normalized key so DOM-scrape variants of the same real
+    # name (whitespace, casing, a "(Host)"/"(You)" suffix) don't fragment
+    # the vote -- but keep one first-seen original-cased string, shared
+    # across every group, as the name actually used in the output (so two
+    # groups resolving to "the same person" always render identically,
+    # never as e.g. "Priya Sharma" in one place and "priya sharma" in
+    # another).
+    global_display: dict[str, str] = {}
+    candidate_keys: dict[str, str] = {}  # placeholder -> winning normalized key
     for placeholder, group_segments in groups.items():
         counts: dict[str, int] = {}
         total = 0
@@ -113,27 +134,31 @@ def resolve_speaker_names(
             window_end = seg.end + tolerance_seconds
             for event in events:
                 if window_start <= event.t_seconds <= window_end:
-                    counts[event.name] = counts.get(event.name, 0) + 1
+                    key = _normalize_key(event.name)
+                    counts[key] = counts.get(key, 0) + 1
+                    global_display.setdefault(key, event.name)
                     total += 1
         if total == 0:
             continue
-        winning_name, votes = max(counts.items(), key=lambda kv: kv[1])
+        winning_key, votes = max(counts.items(), key=lambda kv: kv[1])
         if votes / total >= min_confidence:
-            candidates[placeholder] = (winning_name, votes, total)
+            candidate_keys[placeholder] = winning_key
 
-    # Collision rule: if multiple placeholder groups would resolve to the
-    # same real name, only the more strongly-voted group actually gets
-    # renamed -- the rest keep their placeholder. Letting two diarization
-    # clusters both claim one name would misattribute someone's words in
-    # the final documents, which is worse than an honest "Speaker N".
-    name_to_placeholders: dict[str, list[str]] = {}
-    for placeholder, (name, _votes, _total) in candidates.items():
-        name_to_placeholders.setdefault(name, []).append(placeholder)
-
-    resolved: dict[str, str] = {}
-    for name, placeholders in name_to_placeholders.items():
-        winner = max(placeholders, key=lambda p: (candidates[p][1], candidates[p][2]))
-        resolved[winner] = name
+    # Multiple placeholder groups confidently voting for the same real name
+    # are merged under that name rather than only letting the single
+    # strongest-voted group win it. Each group's vote is computed
+    # independently from its own DOM-event overlap, so two (or more)
+    # groups both confidently landing on the same name is strong evidence
+    # they're the same person split across multiple diarization clusters
+    # (pyannote/AssemblyAI routinely over-segment one voice on pauses,
+    # short utterances, or chunk boundaries) -- not two different people
+    # coincidentally sharing a name. Leaving the extra clusters orphaned as
+    # "Unidentified speaker N" was the direct cause of one real person
+    # appearing both under their real name and as an unidentified speaker
+    # in the same document.
+    resolved: dict[str, str] = {
+        placeholder: global_display[key] for placeholder, key in candidate_keys.items()
+    }
 
     if not resolved:
         return segments
