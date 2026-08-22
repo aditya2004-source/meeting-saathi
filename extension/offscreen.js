@@ -76,9 +76,28 @@ async function startRecording(streamId, title, newRunId) {
   // Your own microphone. Meet does NOT echo your own voice back through the
   // tab's audio output, so without this, your own speech would be missing
   // from the recording entirely.
+  //
+  // Raced against a timeout: an offscreen document CANNOT show Chrome's
+  // native mic permission prompt (a platform restriction -- see popup.js's
+  // own comment on this). If permission is still unresolved ("prompt"
+  // state) when this runs, getUserMedia has nobody able to answer the
+  // prompt it silently opened -- confirmed in production: the call just
+  // hangs forever instead of rejecting, which stalls this whole function
+  // before startRecorderCycle() ever runs, so NOTHING is ever captured or
+  // uploaded and no error is ever reported (background.js's own
+  // START_RECORDING round-trip hangs right along with it). A real
+  // permission denial rejects quickly on its own and is unaffected by this
+  // race; only the stuck-prompt case needs the timeout to fall through to
+  // the existing tab-audio-only fallback below.
+  const MIC_PERMISSION_TIMEOUT_MS = 4000;
   let micStream = null;
   try {
-    micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    micStream = await Promise.race([
+      navigator.mediaDevices.getUserMedia({ audio: true }),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("microphone permission prompt unanswered")), MIC_PERMISSION_TIMEOUT_MS)
+      ),
+    ]);
     capturedStreams.push(micStream);
   } catch (err) {
     console.warn("Meeting Saathi: microphone unavailable, recording tab audio only.", err);
