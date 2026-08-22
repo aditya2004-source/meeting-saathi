@@ -266,9 +266,16 @@ async function startRecording(tabId, title) {
     const reason = String(err.message || err);
     if (runId) {
       // Best-effort, non-blocking -- a failed cancel call must never mask
-      // or delay surfacing the original recording-start error below.
+      // or delay surfacing the original recording-start error below. Sends
+      // the real reason so the dashboard can distinguish "never started"
+      // from "started but failed to upload" (see app/main.py's
+      // cancel_meeting()) instead of one generic, ambiguous message.
       getServerBaseUrl()
-        .then((serverBaseUrl) => fetch(`${serverBaseUrl}/meetings/${runId}/cancel`, { method: "POST" }))
+        .then((serverBaseUrl) => {
+          const formData = new FormData();
+          formData.append("reason", `Recording never started: ${reason}`);
+          return fetch(`${serverBaseUrl}/meetings/${runId}/cancel`, { method: "POST", body: formData });
+        })
         .catch(() => {});
     }
     notifyError(
@@ -320,9 +327,15 @@ async function stopRecording() {
     // Without this, the backend run has no way to ever hear that the
     // meeting ended -- it sits at chunk_processing/received forever,
     // showing "Recording" on the dashboard with a timer that never stops.
+    // Distinct wording from startRecording()'s cancel call above -- audio
+    // WAS captured here, it just never finished uploading/saving.
     if (runId) {
       getServerBaseUrl()
-        .then((serverBaseUrl) => fetch(`${serverBaseUrl}/meetings/${runId}/cancel`, { method: "POST" }))
+        .then((serverBaseUrl) => {
+          const formData = new FormData();
+          formData.append("reason", `Recording captured audio but failed to upload/save: ${reason}`);
+          return fetch(`${serverBaseUrl}/meetings/${runId}/cancel`, { method: "POST", body: formData });
+        })
         .catch(() => {});
     }
     notifyError(

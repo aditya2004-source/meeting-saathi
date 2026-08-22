@@ -34,6 +34,27 @@ def test_cancel_marks_existing_run_failed(monkeypatch):
     assert calls == [("abc123", "Recording was cancelled before any audio was captured")]
 
 
+def test_cancel_uses_the_provided_reason_when_given(monkeypatch):
+    # Lets the dashboard distinguish "never started" from "started but
+    # failed to upload" (see extension/background.js's two call sites)
+    # instead of both landing on the same generic message.
+    run_row = {"id": "abc123", "title": "Test Meeting", "state": "received"}
+    calls = []
+
+    monkeypatch.setattr(db, "get_run", lambda rid: dict(run_row) if rid == "abc123" else None)
+
+    def fake_mark_failed(rid, error):
+        calls.append((rid, str(error)))
+        return dict(run_row)
+
+    monkeypatch.setattr(db, "mark_failed", fake_mark_failed)
+
+    response = client.post("/meetings/abc123/cancel", data={"reason": "Recording never started: some real error"})
+
+    assert response.status_code == 200
+    assert calls == [("abc123", "Recording never started: some real error")]
+
+
 def test_cancel_unknown_run_returns_404(monkeypatch):
     monkeypatch.setattr(db, "get_run", lambda rid: None)
     called = []

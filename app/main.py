@@ -248,15 +248,23 @@ def meeting_status(run_id: str):
 
 
 @app.post("/meetings/{run_id}/cancel")
-def cancel_meeting(run_id: str):
-    """Called by extension/background.js when startRecording() fails AFTER
-    /meetings/start already created the DB row (e.g. tabCapture rejecting
-    the request) -- without this, that row sits at state=received forever,
-    since nothing else ever touches it again."""
+def cancel_meeting(run_id: str, reason: str = Form("")):
+    """Called by extension/background.js in two distinct situations that
+    both used to write the exact same generic message, making them
+    impossible to tell apart later from the dashboard alone: (1)
+    startRecording() fails AFTER /meetings/start already created the DB
+    row (e.g. tabCapture rejected the request) -- no audio was ever
+    captured; (2) stopRecording()'s final upload/finalize fails after a
+    real recording happened -- audio WAS captured, just never made it to
+    the server. `reason` (now sent by the extension) lets each call site
+    say which one actually happened; falls back to the old generic
+    message for any older extension install that doesn't send it.
+    """
     run = db.get_run(run_id)
     if run is None:
         return JSONResponse({"error": "not found"}, status_code=404)
-    run = db.mark_failed(run_id, "Recording was cancelled before any audio was captured")
+    message = reason.strip() or "Recording was cancelled before any audio was captured"
+    run = db.mark_failed(run_id, message)
     return JSONResponse({"id": run["id"], "state": run["state"]})
 
 
