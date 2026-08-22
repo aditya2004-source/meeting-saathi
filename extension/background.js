@@ -333,16 +333,47 @@ async function _settleAfterRecordingEnds(tabId, runId, result) {
   return result;
 }
 
+// Fallback used only when the offscreen document has vanished entirely
+// (confirmed in production: STOP_RECORDING has nowhere to be delivered,
+// so it can't render its own final upload the normal way -- see
+// offscreen.js's uploadChunk()/CAPTURE_STREAM_DIED path for the normal
+// case). Every ~50s chunk recorded *before* this point already uploaded
+// successfully to the server on its own -- only the very last, still-in-
+// progress chunk's audio is actually lost with the document. Without
+// this, the whole meeting used to be thrown away (marked failed via
+// /cancel) despite most of it already sitting safely on the server,
+// because nothing ever told the backend the meeting was over. Sends an
+// empty placeholder as the final chunk purely to trigger the server's
+// finalize path -- app/orchestrator_streaming.py's per-chunk processing
+// tolerates one bad/empty chunk without failing the whole run (see
+// _process_chunk_then_maybe_finalize()'s try/except there), so this just
+// means the last few seconds might be missing, not the whole meeting.
+async function _finalizeWithoutOffscreen(id, speakerEvents, attendeeRoster) {
+  try {
+    const serverBaseUrl = await getServerBaseUrl();
+    const formData = new FormData();
+    formData.append("sequence", "999999");
+    formData.append("audio", new Blob([], { type: "audio/webm" }), "empty-final.webm");
+    formData.append("speaker_events", JSON.stringify(speakerEvents || []));
+    formData.append("attendee_roster", JSON.stringify(attendeeRoster || []));
+    const response = await fetch(`${serverBaseUrl}/meetings/${id}/finalize`, { method: "POST", body: formData });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 async function stopRecording() {
-  const { activeTabId, runId } = await getState();
+  const { activeTabId, runId, speakerEvents, attendeeRoster } = await getState();
   if (activeTabId === null) return { ok: false, reason: "not recording" };
   const tabId = activeTabId;
-  // No speakerEvents/attendeeRoster passed here -- offscreen.js already has
-  // runId from START_RECORDING, and pulls a fresh snapshot of each via
-  // GET_SPEAKER_EVENTS_SNAPSHOT/GET_ROSTER_SNAPSHOT right before every
-  // chunk/finalize upload (including this terminal one), so it's always
-  // current as of the actual upload moment rather than a possibly-stale
-  // value passed here.
+  // No speakerEvents/attendeeRoster passed to offscreen.js's own upload
+  // path -- it already has runId from START_RECORDING, and pulls a fresh
+  // snapshot of each via GET_SPEAKER_EVENTS_SNAPSHOT/GET_ROSTER_SNAPSHOT
+  // right before every chunk/finalize upload, so it's always current as
+  // of the actual upload moment rather than a possibly-stale value passed
+  // here. (The fallback path below is the one exception -- it has no
+  // offscreen document left to ask, so it uses this same state's own copy.)
   let result;
   try {
     result = await chrome.runtime.sendMessage({ target: "offscreen", type: "STOP_RECORDING" });
@@ -352,8 +383,10 @@ async function stopRecording() {
     // (confirmed in production: this exact case left a run stuck showing
     // "Recording" with an ever-increasing elapsed timer forever, since the
     // uncaught rejection here used to skip everything below, including the
-    // /cancel call). Treat it the same as "nothing to stop."
-    result = { ok: false, reason: "offscreen document unavailable" };
+    // /cancel call). Try to salvage the meeting from whatever chunks
+    // already uploaded before giving up.
+    const salvaged = runId ? await _finalizeWithoutOffscreen(runId, speakerEvents, attendeeRoster) : false;
+    result = salvaged ? { ok: true } : { ok: false, reason: "offscreen document unavailable" };
   }
   return _settleAfterRecordingEnds(tabId, runId, result);
 }
