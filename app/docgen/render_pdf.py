@@ -37,21 +37,21 @@ def markdown_to_pdf(markdown_text: str, dest_path: Path) -> Path:
 def render_documents_to_pdf(
     docs: dict,
     mom_pdf_path: Path,
-    requirement_gathering_pdf_path: Path,
-    action_pdf_path: Path,
+    meeting_analysis_pdf_path: Path,
     recorder: Optional[TimingRecorder] = None,
 ) -> None:
-    """Renders the three generated documents to PDF, one at a time.
+    """Renders the generated documents to PDF, one at a time.
 
     Deliberately sequential, not concurrent: Playwright's sync API is not
     safe to call from multiple threads in the same process -- each call
     spins up its own background thread + asyncio event loop to drive the
     Node driver subprocess, and those loops race on Python's process-global
-    subprocess child watcher. Running this 3-way concurrently (the previous
-    design) caused a real crash in production: "RuntimeError: Racing with
-    another loop to spawn a process." An earlier benchmark that didn't hit
-    the race was never real evidence of safety -- concurrency bugs like this
-    are inherently intermittent."""
+    subprocess child watcher. Running this concurrently (an earlier design,
+    back when there were three documents) caused a real crash in
+    production: "RuntimeError: Racing with another loop to spawn a
+    process." An earlier benchmark that didn't hit the race was never real
+    evidence of safety -- concurrency bugs like this are inherently
+    intermittent."""
 
     def _render(stage: str, markdown_text: str, dest_path: Path) -> None:
         if recorder is None:
@@ -62,12 +62,7 @@ def render_documents_to_pdf(
 
     jobs = [
         ("render_mom_pdf", docs["mom"]["markdown_body"], mom_pdf_path),
-        (
-            "render_requirement_gathering_pdf",
-            docs["requirement_gathering"]["markdown_body"],
-            requirement_gathering_pdf_path,
-        ),
-        ("render_action_points_pdf", docs["action_points"]["markdown_body"], action_pdf_path),
+        ("render_meeting_analysis_pdf", docs["meeting_analysis"]["markdown_body"], meeting_analysis_pdf_path),
     ]
     for stage, text, path in jobs:
         _render(stage, text, path)

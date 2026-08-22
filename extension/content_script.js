@@ -209,7 +209,7 @@ function findActiveSpeakerName() {
       tile.getAttribute?.("data-self-name") || tile.getAttribute?.("data-participant-name");
     const name = (explicitName && explicitName.trim()) || pickNameFromElement(tile);
     if (!name) {
-      console.debug("[Sarathi] findActiveSpeakerName: no name-shaped candidate in tile", tile);
+      console.debug("[Meeting Saathi] findActiveSpeakerName: no name-shaped candidate in tile", tile);
       continue;
     }
     // The local user's own tile is commonly labeled "You" -- never a real
@@ -220,7 +220,7 @@ function findActiveSpeakerName() {
     // last (the previous behavior).
     if (name.toLowerCase() === "you") {
       if (localUserRealName) return localUserRealName;
-      console.debug("[Sarathi] findActiveSpeakerName: local user speaking, real name not yet known");
+      console.debug("[Meeting Saathi] findActiveSpeakerName: local user speaking, real name not yet known");
       continue;
     }
     return name;
@@ -313,7 +313,7 @@ function readPeoplePanelRoster() {
       // Meet's People panel normally shows the local user's full name with
       // a "(You)" suffix (handled below), this only guards the rare case
       // where nothing else was found in the row.
-      if (!raw) console.debug("[Sarathi] readPeoplePanelRoster: no name-shaped candidate in row", row);
+      if (!raw) console.debug("[Meeting Saathi] readPeoplePanelRoster: no name-shaped candidate in row", row);
       continue;
     }
 
@@ -430,7 +430,7 @@ function showBanner(message, isError, persistent = isError) {
 
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "SARATHI_RECORDING_STARTED") {
-    showBanner("🔴 Sarathi Meeting Bot is recording this meeting", false);
+    showBanner("🔴 Meeting Saathi is recording this meeting", false);
     // Only observe for speaker names once a recording is confirmed
     // started (not just "in call") -- ties the timeline's t=0 to the same
     // event background.js anchors recordingStartedAtMs to, and covers the
@@ -439,7 +439,7 @@ chrome.runtime.onMessage.addListener((message) => {
     startSpeakerObserver();
     startRosterScraper();
   } else if (message.type === "SARATHI_RECORDING_FAILED") {
-    showBanner(`Sarathi Meeting Bot could not start recording: ${message.reason}`, true);
+    showBanner(`Meeting Saathi could not start recording: ${message.reason}`, true);
     recordingActive = false;
     stopSpeakerObserver();
     stopRosterScraper();
@@ -449,13 +449,13 @@ chrome.runtime.onMessage.addListener((message) => {
     stopSpeakerObserver();
     stopRosterScraper();
   } else if (message.type === "SARATHI_UPLOAD_FAILED") {
-    showBanner(`Sarathi Meeting Bot: upload failed (${message.reason}) — is the local server running?`, true);
+    showBanner(`Meeting Saathi: upload failed (${message.reason}) — is the local server running?`, true);
     recordingActive = false;
     stopSpeakerObserver();
     stopRosterScraper();
   } else if (message.type === "SARATHI_CHUNK_UPLOAD_FAILED") {
     showBanner(
-      `Sarathi Meeting Bot: chunk ${message.sequence} failed to upload (${message.reason}) — some audio may be missing`,
+      `Meeting Saathi: chunk ${message.sequence} failed to upload (${message.reason}) — some audio may be missing`,
       true
     );
   }
@@ -473,7 +473,7 @@ function poll() {
     // (confirmed the hard way: Chrome rejected it with "Extension has not
     // been invoked for the current page"), so this can only ever be a
     // reminder, never a working button.
-    showBanner("👆 Click the Sarathi Meeting Bot icon to start recording", false, true);
+    showBanner("👆 Click the Meeting Saathi icon to start recording", false, true);
   } else if (!nowInCall && inCall) {
     inCall = false;
     chrome.runtime.sendMessage({ type: "MEETING_LEFT" });

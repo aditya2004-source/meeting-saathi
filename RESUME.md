@@ -1,4 +1,4 @@
-# Resume Notes — Sarathi Meeting Bot
+# Resume Notes — Meeting Saathi
 
 Both work streams from this session are now complete and verified. This
 file is kept as a record of what was done and why, not as an active task

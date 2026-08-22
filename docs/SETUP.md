@@ -46,7 +46,7 @@ Then fill in each value. Full list of settings:
 | `WHISPER_COMPUTE_TYPE` | Technical speed setting for transcription | No, leave as `int8` |
 | `HUGGINGFACE_TOKEN` | Free local model that figures out "who said what" | **Yes** (free signup, not a paid API) |
 | `ASSEMBLYAI_API_KEY` | Speeds up the rare case where the local model above is slow (sparse DOM speaker coverage) by using a paid cloud API instead | No — optional, paid (pay-as-you-go, ~$0.17/hour of audio). Leave blank to keep using the free local model for that case |
-| `BASE_STORAGE_DIR` | Where your meeting folders get saved | No, defaults to `~/Downloads/Sarathi Meetings` |
+| `BASE_STORAGE_DIR` | Where your meeting folders get saved | No, defaults to `~/Downloads/Meeting Saathi` |
 | `KEEP_RAW_RECORDING` | Whether to also keep the raw uploaded recording | No, off by default (transcript is the backup) |
 | `PORT` | Which port the local server runs on — the extension is hardcoded to talk to `localhost:8420` | No, leave as 8420 unless you also edit `extension/offscreen.js` |
 

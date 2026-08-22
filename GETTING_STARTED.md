@@ -73,7 +73,7 @@ any website.
 
 1. Open Google Meet in Chrome like you normally would, and join your
    meeting.
-2. **Click the Sarathi Meeting Bot icon in Chrome's toolbar once** — you'll
+2. **Click the Meeting Saathi icon in Chrome's toolbar once** — you'll
    briefly see an orange dot on the icon once you're in the call, inviting
    this click. This starts recording; you'll then see a small red "REC"
    badge on the icon.
@@ -81,7 +81,7 @@ any website.
 4. Leave the call when it's done — recording stops automatically and gets
    sent off for processing. No further clicks needed.
 5. A few minutes later, check:
-   `~/Downloads/Sarathi Meetings/<meeting title> - <date> <time>/`
+   `~/Downloads/Meeting Saathi/<meeting title> - <date> <time>/`
    You'll find `MOM.pdf`, `Requirement_Gathering_Sheet.pdf`, `Action_Points.pdf`, and the full
    transcript, already sitting there.
 6. You can also check progress any time at http://localhost:8420.

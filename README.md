@@ -1,4 +1,4 @@
-# Sarathi Meeting Bot
+# Meeting Saathi
 
 **New here? Start with [`GETTING_STARTED.md`](GETTING_STARTED.md)** — a
 plain-language, step-by-step guide to the one-time setup and daily use.

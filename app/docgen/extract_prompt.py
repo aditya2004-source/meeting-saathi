@@ -10,7 +10,7 @@ LANGUAGE_RULE = (
     "proper nouns/names."
 )
 
-EXTRACT_SYSTEM_PROMPT = f"""You are the extraction layer for Sarathi Meeting Bot. You
+EXTRACT_SYSTEM_PROMPT = f"""You are the extraction layer for Meeting Saathi. You
 are given a full, speaker-labeled, timestamped transcript of a business meeting.
 
 YOUR JOB

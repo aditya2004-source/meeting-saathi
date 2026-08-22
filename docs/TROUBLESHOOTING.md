@@ -53,8 +53,8 @@ two different causes historically, both now fixed (see
 
 If you still ever see this (e.g. on an old cached copy of the extension
 that hasn't been reloaded since this fix):
-1. **Reload the extension** at `chrome://extensions` (↻ on the Sarathi
-   Meeting Bot card) — this bug only reproduces on old code.
+1. **Reload the extension** at `chrome://extensions` (↻ on the Meeting
+   Saathi card) — this bug only reproduces on old code.
 2. Click the extension icon and press **Stop Recording** directly in the
    popup to recover whatever was captured — this doesn't depend on any of
    the automatic detection, so it should still work.
@@ -70,7 +70,7 @@ that hasn't been reloaded since this fix):
   wasn't running when a chunk tried to upload, that chunk fails (see "A
   banner says a chunk upload failed" above); if it wasn't running for the
   whole meeting, most/all chunks will have failed. Open the extension's
-  background page console (`chrome://extensions` → Sarathi Meeting Bot →
+  background page console (`chrome://extensions` → Meeting Saathi →
   "service worker" link → Console tab) to see upload errors.
 - Confirm `host_permissions` in `extension/manifest.json` includes
   `http://localhost:8420/*` and you didn't change the server's port without
@@ -127,7 +127,7 @@ documents.
 
 ## My own voice is missing from the recording, only other people are there
 
-## Console shows "Sarathi Meeting Bot: microphone unavailable, recording tab audio only"
+## Console shows "Meeting Saathi: microphone unavailable, recording tab audio only"
 
 Both of the above are the same issue: the extension's origin has never
 been granted microphone access. This isn't about `meet.google.com`'s own
@@ -145,7 +145,7 @@ themselves, a Chrome restriction (see `extension/DESIGN.md`). Fix:
 
 If the popup instead says microphone is *blocked* (you denied it before),
 it'll tell you to open `chrome://settings/content/microphone`, find
-Sarathi Meeting Bot in the blocked list, and switch it to Allow.
+Meeting Saathi in the blocked list, and switch it to Allow.
 
 ## A banner says a chunk upload failed / part of the meeting may be missing
 

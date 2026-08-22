@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Re-run only document generation + PDF rendering from an existing
 transcript.json, without rejoining a meeting or re-transcribing audio.
-Useful for iterating on the MOM/Requirement-Gathering-Sheet/Action-Points prompts.
+Useful for iterating on the MOM/Meeting-Analysis prompts.
 
 Usage:
     python scripts/regenerate_docs.py /path/to/meeting/folder/transcript.json
@@ -36,8 +36,7 @@ def main() -> None:
     out_dir = transcript_path.parent
     for key, filename in [
         ("mom", "MOM"),
-        ("requirement_gathering", "Requirement_Gathering_Sheet"),
-        ("action_points", "Action_Points"),
+        ("meeting_analysis", "Meeting_Analysis"),
     ]:
         markdown_body = docs[key]["markdown_body"]
         (out_dir / f"{filename}.md").write_text(markdown_body, encoding="utf-8")

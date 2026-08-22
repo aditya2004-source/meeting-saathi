@@ -8,14 +8,11 @@ from google.genai import types
 from app.config import settings
 from app.docgen.extract_prompt import EXTRACT_RESPONSE_SCHEMA, EXTRACT_SYSTEM_PROMPT
 from app.docgen.generate_prompt import (
-    ACTION_POINTS_RESPONSE_SCHEMA,
-    ACTION_POINTS_SYSTEM_PROMPT,
+    MEETING_ANALYSIS_RESPONSE_SCHEMA,
+    MEETING_ANALYSIS_SYSTEM_PROMPT,
     MOM_RESPONSE_SCHEMA,
     MOM_SYSTEM_PROMPT,
-    REQUIREMENT_GATHERING_RESPONSE_SCHEMA,
-    REQUIREMENT_GATHERING_SYSTEM_PROMPT,
 )
-from app.docgen.render_tables import render_requirement_gathering_markdown
 from app.pipeline.timing import TimingRecorder, timed
 
 _client = genai.Client(api_key=settings.gemini_api_key)
@@ -140,13 +137,9 @@ def empty_meeting_documents(meeting_title: str, meeting_date: str = "") -> dict:
             "title": "Minutes of Meeting",
             "markdown_body": f"# Minutes of Meeting — {meeting_title}{heading_suffix}\n\n{note}\n",
         },
-        "requirement_gathering": {
-            "title": "Requirement Gathering Sheet",
-            "markdown_body": f"# Requirement Gathering Sheet — {meeting_title}{heading_suffix}\n\n{note}\n",
-        },
-        "action_points": {
-            "title": "Action Points",
-            "markdown_body": f"# Action Points — {meeting_title}{heading_suffix}\n\n{note}\n",
+        "meeting_analysis": {
+            "title": "Meeting Analysis",
+            "markdown_body": f"# Meeting Analysis — {meeting_title}{heading_suffix}\n\n{note}\n",
         },
     }
 
@@ -183,11 +176,16 @@ def generate_documents(
     recorder: Optional[TimingRecorder] = None,
 ) -> dict:
     """Two-call pattern: Call 1 extracts structured facts (forced JSON
-    schema), Call 2 runs three times (forced JSON schema each) to write
-    MOM, the Requirement Gathering Sheet, and Action Points -- each grounded
-    only in Call 1's facts + the transcript, so the three are independent of
-    each other and run concurrently (network-bound Gemini calls release the
-    GIL, so real threads pay off here without needing an asyncio rewrite).
+    schema), Call 2 runs twice (forced JSON schema each) to write MOM and
+    the Meeting Analysis doc -- each grounded only in Call 1's facts + the
+    transcript, so the two are independent of each other and run
+    concurrently (network-bound Gemini calls release the GIL, so real
+    threads pay off here without needing an asyncio rewrite).
+
+    Phase 1 (sharing with BA testers): the Requirement Gathering Sheet and
+    Action Points generators are intentionally not called here -- their
+    prompts/schemas still live in generate_prompt.py, so re-enabling them
+    later is a small addition here, not a rewrite.
 
     `attendees` should be the deterministic roster+spoken-names union from
     app.pipeline.roster.compute_attendees() -- the authoritative Attendees
@@ -212,27 +210,16 @@ def generate_documents(
                 system_prompt, schema, meeting_title, meeting_date, attendees, facts, transcript_text
             )
 
-    with ThreadPoolExecutor(max_workers=3) as pool:
+    with ThreadPoolExecutor(max_workers=2) as pool:
         mom_future = pool.submit(_generate, "generate_mom", MOM_SYSTEM_PROMPT, MOM_RESPONSE_SCHEMA)
-        rg_future = pool.submit(
-            _generate,
-            "generate_requirement_gathering",
-            REQUIREMENT_GATHERING_SYSTEM_PROMPT,
-            REQUIREMENT_GATHERING_RESPONSE_SCHEMA,
-        )
-        ap_future = pool.submit(
-            _generate, "generate_action_points", ACTION_POINTS_SYSTEM_PROMPT, ACTION_POINTS_RESPONSE_SCHEMA
+        analysis_future = pool.submit(
+            _generate, "generate_meeting_analysis", MEETING_ANALYSIS_SYSTEM_PROMPT, MEETING_ANALYSIS_RESPONSE_SCHEMA
         )
         mom = mom_future.result()
-        requirement_gathering = rg_future.result()
-        action_points = ap_future.result()
+        meeting_analysis = analysis_future.result()
 
-    requirement_gathering["markdown_body"] = render_requirement_gathering_markdown(
-        requirement_gathering["title"], requirement_gathering["rows"]
-    )
     return {
         "facts": facts,
         "mom": mom,
-        "requirement_gathering": requirement_gathering,
-        "action_points": action_points,
+        "meeting_analysis": meeting_analysis,
     }

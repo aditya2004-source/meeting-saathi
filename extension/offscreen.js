@@ -15,7 +15,16 @@
 // immediately in onstop, before doing anything else (including the upload
 // of the blob that just finished).
 
-const SERVER_BASE_URL = "http://localhost:8420";
+// Phase 1 (sharing with BA testers): configurable, same convention as
+// background.js's own copy of this helper (separate execution context,
+// can't share code) -- set once in popup.js's Setup section.
+const DEFAULT_SERVER_BASE_URL = "http://localhost:8420";
+
+async function getServerBaseUrl() {
+  const { serverBaseUrl } = await chrome.storage.local.get("serverBaseUrl");
+  return serverBaseUrl || DEFAULT_SERVER_BASE_URL;
+}
+
 const CHUNK_INTERVAL_MS = 50000; // ~50s per chunk
 
 let mediaRecorder = null;
@@ -58,7 +67,7 @@ async function startRecording(streamId, title, newRunId) {
     micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     capturedStreams.push(micStream);
   } catch (err) {
-    console.warn("Sarathi Meeting Bot: microphone unavailable, recording tab audio only.", err);
+    console.warn("Meeting Saathi: microphone unavailable, recording tab audio only.", err);
   }
 
   // Safety net independent of content_script.js's DOM-based call-end
@@ -168,9 +177,10 @@ const UPLOAD_MAX_ATTEMPTS = 3;
 const UPLOAD_BACKOFF_MS = [1000, 3000, 9000];
 
 async function uploadChunk(sequenceNumber, blob, isFinal, attempt = 1) {
+  const serverBaseUrl = await getServerBaseUrl();
   const url = isFinal
-    ? `${SERVER_BASE_URL}/meetings/${runId}/finalize`
-    : `${SERVER_BASE_URL}/meetings/${runId}/chunk`;
+    ? `${serverBaseUrl}/meetings/${runId}/finalize`
+    : `${serverBaseUrl}/meetings/${runId}/chunk`;
   const speakerEvents = await fetchSpeakerEventsSnapshot();
   const attendeeRoster = await fetchRosterSnapshot();
 
@@ -197,7 +207,7 @@ async function uploadChunk(sequenceNumber, blob, isFinal, attempt = 1) {
       return uploadChunk(sequenceNumber, blob, isFinal, attempt + 1);
     }
     console.error(
-      `Sarathi Meeting Bot: chunk ${sequenceNumber} upload failed after ${UPLOAD_MAX_ATTEMPTS} attempts.`,
+      `Meeting Saathi: chunk ${sequenceNumber} upload failed after ${UPLOAD_MAX_ATTEMPTS} attempts.`,
       err
     );
     // v1 durability gap, documented: no local persistence/replay queue for
@@ -229,7 +239,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     startRecording(message.streamId, message.title, message.runId)
       .then(() => sendResponse({ ok: true }))
       .catch((err) => {
-        console.error("Sarathi Meeting Bot: startRecording failed.", err);
+        console.error("Meeting Saathi: startRecording failed.", err);
         sendResponse({ ok: false, error: String(err.message || err) });
       });
     return true;

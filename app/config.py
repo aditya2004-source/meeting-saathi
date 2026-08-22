@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     speaker_event_max_staleness_seconds: float = 300.0
 
     # Output storage
-    base_storage_dir: Path = Path.home() / "Downloads" / "Sarathi Meetings"
+    base_storage_dir: Path = Path.home() / "Downloads" / "Meeting Saathi"
     keep_raw_recording: bool = False
     # IANA timezone used to display meeting dates/times in generated
     # documents and the dashboard -- explicit rather than relying on the
@@ -86,7 +86,20 @@ class Settings(BaseSettings):
     # Local service
     port: int = 8420
 
-    # Internal paths (not env-configurable)
+    # Multi-user sharing (Phase 1: sharing with BA testers) -- each caller
+    # identifies itself with a plain user_name string (no login/password),
+    # capped at this many meeting-starts per day to keep any one person from
+    # burning the whole team's shared Gemini quota. See app.db.count_runs_today().
+    daily_meeting_limit: int = 3
+
+    # Internal paths -- project_root itself is not env-configurable (it's
+    # derived from this file's own location), but db_path/working_dir are,
+    # same pattern as base_storage_dir above. Needed for Railway: the
+    # container filesystem is ephemeral and wiped on every redeploy, so a
+    # real deployment points these three at a mounted persistent Volume
+    # (e.g. DB_PATH=/data/runs.sqlite3, WORKING_DIR=/data/working) via env
+    # vars. The defaults below are untouched, so the existing local/systemd
+    # deployment needs zero env changes and keeps working exactly as before.
     project_root: Path = Path(__file__).resolve().parent.parent
     db_path: Path = project_root / "data" / "runs.sqlite3"
     working_dir: Path = project_root / "working"

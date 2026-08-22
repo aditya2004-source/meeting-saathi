@@ -8,7 +8,7 @@ and the `/meetings/{id}/status` JSON endpoint.
 
 Design choices worth calling out:
 - A percent/ETA is only ever given for the *bounded* post-meeting tail
-  (extract facts -> generate 3 docs -> render 3 PDFs -> save). While a
+  (extract facts -> generate 2 docs -> render 2 PDFs -> save). While a
   meeting is still being recorded (chunk_processing, or legacy
   transcribing/diarizing), duration is fundamentally open-ended -- a
   fabricated countdown there would be actively misleading, so this
@@ -21,9 +21,9 @@ Design choices worth calling out:
 from typing import Optional
 
 # Timing.json keys that make up the bounded post-meeting tail, in roughly
-# the order they occur (extract_facts always finishes before the 3
-# generate_* calls start; the 3 render_*_pdf calls run concurrently after
-# all 3 generate_* calls finish; save_meeting_folder is last). Shared with
+# the order they occur (extract_facts always finishes before the 2
+# generate_* calls start; the 2 render_*_pdf calls run one after another
+# once both generate_* calls finish; save_meeting_folder is last). Shared with
 # orchestrator.py/orchestrator_streaming.py, which use this same list to
 # decide which of TimingRecorder's keys are worth folding into the
 # persisted cross-run history (app.pipeline.timing.record_stage_durations)
@@ -32,18 +32,15 @@ from typing import Optional
 TAIL_STAGE_KEYS = [
     "extract_facts",
     "generate_mom",
-    "generate_requirement_gathering",
-    "generate_action_points",
+    "generate_meeting_analysis",
     "render_mom_pdf",
-    "render_requirement_gathering_pdf",
-    "render_action_points_pdf",
+    "render_meeting_analysis_pdf",
     "save_meeting_folder",
 ]
 
 _GENERATE_STAGE_LABELS = [
     ("generate_mom", "MOM"),
-    ("generate_requirement_gathering", "Requirement Sheet"),
-    ("generate_action_points", "Discussion & Action Points"),
+    ("generate_meeting_analysis", "Meeting Analysis"),
 ]
 
 _STATE_LABELS = {
@@ -84,7 +81,7 @@ def _generating_docs_label(timing: dict) -> str:
     if not pending:
         return "Finishing document generation..."
     if len(pending) == len(_GENERATE_STAGE_LABELS):
-        return "Generating MOM, Requirement Sheet & Discussion/Action Points..."
+        return "Generating MOM & Meeting Analysis..."
     return "Generating " + ", ".join(pending) + "..."
 
 

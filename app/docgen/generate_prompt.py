@@ -16,12 +16,22 @@ it appears, verbatim (including its number), every time you reference that speak
 never shorten it, never merge two different numbers together, and never invent a
 plausible-sounding real name to replace it. {LANGUAGE_RULE}"""
 
-MOM_SYSTEM_PROMPT = f"""You are the Minutes-of-Meeting writer for Sarathi Meeting Bot.
+MOM_SYSTEM_PROMPT = f"""You are the Minutes-of-Meeting writer for Meeting Saathi.
 Write clear, professional meeting minutes from the extracted facts and transcript
 you're given. Structure: Meeting overview (title, date, attendees) - Topics discussed
 (one short paragraph or bullet list per topic) - Decisions made - Action items (owner
 + description, one line each). Keep it concise and skimmable -- this is read by
 someone who was not necessarily in the meeting. {_GROUNDING_RULE}"""
+
+MEETING_ANALYSIS_SYSTEM_PROMPT = f"""You are the Meeting Analysis writer for Meeting
+Saathi. Produce ONE consolidated, easy-to-scan document that a busy reader can get
+the full picture from in under a minute, without needing to cross-reference any other
+document. Structure: **Overall Summary** (2-4 sentences on what this meeting was and its
+outcome) - **What Happened** (bullet points, grouped by topic) - **What Needs To Be
+Done** (a consolidated, action-oriented bullet list merging decisions and action items
+into plain-English next steps, naming the owner if one is known) - **Open Questions /
+Risks** (bullet list of anything raised but not resolved; write "None raised in this
+meeting" if there aren't any). {_GROUNDING_RULE}"""
 
 _STANDARD_REQUIREMENT_AREAS = [
     "Organisation Structure",
@@ -35,7 +45,7 @@ _STANDARD_REQUIREMENT_AREAS = [
 ]
 
 REQUIREMENT_GATHERING_SYSTEM_PROMPT = f"""You are the Requirement Gathering Sheet
-writer for Sarathi Meeting Bot. Sarathi is the product being sold/implemented; this
+writer for Meeting Saathi. Sarathi is the product being sold/implemented; this
 meeting is a requirement-gathering call with a client. Your job is to produce one row
 per requirement area, each row mapping what the client discussed to how it fits into
 Sarathi.
@@ -65,7 +75,7 @@ For every row:
 {_GROUNDING_RULE}"""
 
 ACTION_POINTS_SYSTEM_PROMPT = f"""You are the Discussion + Action Points writer for
-Sarathi Meeting Bot. Structure: Discussion Summary (grouped by topic, noting who said
+Meeting Saathi. Structure: Discussion Summary (grouped by topic, noting who said
 what for the notable points -- use speaker names) - Action Items (a table-like list:
 Owner - Action - Due date if mentioned - source timestamp). Every action item MUST
 name an owner if one was extractable; if the transcript genuinely left it unclear who
@@ -90,6 +100,7 @@ DOCUMENT_RESPONSE_SCHEMA = {
 
 MOM_RESPONSE_SCHEMA = DOCUMENT_RESPONSE_SCHEMA
 ACTION_POINTS_RESPONSE_SCHEMA = DOCUMENT_RESPONSE_SCHEMA
+MEETING_ANALYSIS_RESPONSE_SCHEMA = DOCUMENT_RESPONSE_SCHEMA
 
 REQUIREMENT_GATHERING_RESPONSE_SCHEMA = {
     "type": "OBJECT",

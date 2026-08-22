@@ -264,20 +264,15 @@ def finalize_run(run_id: str) -> None:
 
     db.update_run(run_id, state="rendering")
     mom_pdf_path = work_dir / "MOM.pdf"
-    requirement_gathering_pdf_path = work_dir / "Requirement_Gathering_Sheet.pdf"
-    action_pdf_path = work_dir / "Action_Points.pdf"
-    render_documents_to_pdf(
-        docs, mom_pdf_path, requirement_gathering_pdf_path, action_pdf_path, recorder=recorder
-    )
+    meeting_analysis_pdf_path = work_dir / "Meeting_Analysis.pdf"
+    render_documents_to_pdf(docs, mom_pdf_path, meeting_analysis_pdf_path, recorder=recorder)
 
     db.update_run(run_id, state="saving")
     files: dict[str, bytes | str] = {
         "MOM.md": docs["mom"]["markdown_body"],
         "MOM.pdf": mom_pdf_path.read_bytes(),
-        "Requirement_Gathering_Sheet.md": docs["requirement_gathering"]["markdown_body"],
-        "Requirement_Gathering_Sheet.pdf": requirement_gathering_pdf_path.read_bytes(),
-        "Action_Points.md": docs["action_points"]["markdown_body"],
-        "Action_Points.pdf": action_pdf_path.read_bytes(),
+        "Meeting_Analysis.md": docs["meeting_analysis"]["markdown_body"],
+        "Meeting_Analysis.pdf": meeting_analysis_pdf_path.read_bytes(),
         "transcript.json": json.dumps(transcript, indent=2),
         "transcript.txt": transcript_text,
     }

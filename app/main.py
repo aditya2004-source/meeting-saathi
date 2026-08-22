@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -17,7 +17,7 @@ from app.pipeline.merge import format_meeting_date
 from app.pipeline.timing import load_stage_history, load_timing
 from app.progress import describe_progress
 
-app = FastAPI(title="Sarathi Meeting Bot")
+app = FastAPI(title="Meeting Saathi")
 templates = Jinja2Templates(directory="app/web/templates")
 app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 
@@ -32,6 +32,21 @@ app.add_middleware(
 
 
 _STAGE_HISTORY_PATH = settings.project_root / "data" / "stage_duration_history.json"
+
+# Fixed allowlist for /meetings/{run_id}/files/{filename} below -- these are
+# exactly the filenames app.orchestrator.py/app.orchestrator_streaming.py
+# ever write into a saved meeting's folder. Never treat a request's
+# `filename` path segment as a trusted filesystem path on its own (that
+# would allow path traversal, e.g. `../../etc/passwd`); only ever serve one
+# of these exact names.
+_DOWNLOADABLE_FILES = {
+    "MOM.pdf",
+    "MOM.md",
+    "Meeting_Analysis.pdf",
+    "Meeting_Analysis.md",
+    "transcript.txt",
+    "transcript.json",
+}
 
 
 def _format_started(created_at: str) -> str:
@@ -81,7 +96,10 @@ def index(request: Request):
     for run in runs:
         run["started_display"] = _format_started(run["created_at"])
         run["progress"] = _progress_for_run(run)
-    return templates.TemplateResponse("index.html", {"request": request, "runs": runs})
+    usage = db.usage_summary()
+    for entry in usage:
+        entry["last_active_display"] = _format_started(entry["last_active"])
+    return templates.TemplateResponse("index.html", {"request": request, "runs": runs, "usage": usage})
 
 
 def _start_processing(
@@ -188,6 +206,26 @@ def cancel_meeting(run_id: str):
     return JSONResponse({"id": run["id"], "state": run["state"]})
 
 
+@app.get("/meetings/{run_id}/files/{filename}")
+def download_meeting_file(run_id: str, filename: str):
+    """Serves one file from a saved meeting's folder -- added for remote
+    deployments (Railway etc.) where nobody has direct filesystem access to
+    run["folder_path"] the way a local-machine user can just open their own
+    Downloads folder. `filename` is checked against `_DOWNLOADABLE_FILES`
+    rather than trusted as a path segment, so this can't be used to read
+    arbitrary files off the server.
+    """
+    if filename not in _DOWNLOADABLE_FILES:
+        return JSONResponse({"error": "not found"}, status_code=404)
+    run = db.get_run(run_id)
+    if run is None or run["state"] != "saved" or not run.get("folder_path"):
+        return JSONResponse({"error": "not found"}, status_code=404)
+    file_path = Path(run["folder_path"]) / filename
+    if not file_path.is_file():
+        return JSONResponse({"error": "not found"}, status_code=404)
+    return FileResponse(file_path, filename=filename)
+
+
 # --- Chunked/streaming pipeline (additive -- /meetings/upload and
 # /meetings/upload-form above are untouched and keep working as the
 # manual/testing fallback). The Chrome extension uses this trio instead:
@@ -197,8 +235,27 @@ def cancel_meeting(run_id: str):
 
 
 @app.post("/meetings/start")
-async def start_meeting(title: str = Form(...)):
-    run = db.create_run(title=title.strip() or "Untitled Meeting", audio_path="")
+async def start_meeting(title: str = Form(...), user_name: str = Form("")):
+    """`user_name` is a plain self-reported identifier (no login/password --
+    see extension/popup.js's Setup section) used only to enforce
+    settings.daily_meeting_limit and to populate the dashboard's usage-by-
+    person table (see app.db.usage_summary()). An empty user_name (an
+    extension that hasn't set one up yet) is never rate-limited -- there's
+    nothing to count it against.
+    """
+    user_name = user_name.strip()
+    if user_name and db.count_runs_today(user_name) >= settings.daily_meeting_limit:
+        return JSONResponse(
+            {
+                "error": "daily_limit_reached",
+                "message": (
+                    f"Aaj ka limit ({settings.daily_meeting_limit} meetings) khatam ho gaya hai. "
+                    "Kal phir try karo."
+                ),
+            },
+            status_code=429,
+        )
+    run = db.create_run(title=title.strip() or "Untitled Meeting", audio_path="", user_name=user_name)
     working_dir_for(run["id"])
     run = db.update_run(run["id"], state="received")
     return JSONResponse({"id": run["id"], "state": run["state"]})

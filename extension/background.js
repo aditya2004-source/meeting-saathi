@@ -3,7 +3,21 @@
 // getUserMedia/MediaRecorder directly.
 
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
-const SERVER_BASE_URL = "http://localhost:8420";
+// Phase 1 (sharing with BA testers): no longer a single hardcoded value --
+// each install can point at a different backend (e.g. a tunnel URL), set
+// once in popup.js's Setup section and stored in chrome.storage.local.
+// Falls back to localhost for the original single-machine setup.
+const DEFAULT_SERVER_BASE_URL = "http://localhost:8420";
+
+async function getServerBaseUrl() {
+  const { serverBaseUrl } = await chrome.storage.local.get("serverBaseUrl");
+  return serverBaseUrl || DEFAULT_SERVER_BASE_URL;
+}
+
+async function getUserName() {
+  const { userName } = await chrome.storage.local.get("userName");
+  return userName || "";
+}
 
 // Comparison key for "is this the same person" -- mirrors
 // content_script.js's/app/pipeline/roster.py's own normalizeKey()/
@@ -131,13 +145,13 @@ async function armTab(tabId, title) {
   await setState({ pendingTabId: tabId, pendingTitle: title });
   chrome.action.setBadgeText({ text: "●" });
   chrome.action.setBadgeBackgroundColor({ color: "#e07b00" });
-  chrome.action.setTitle({ title: "Sarathi Meeting Bot — click to start recording" });
+  chrome.action.setTitle({ title: "Meeting Saathi — click to start recording" });
 }
 
 async function disarm() {
   await setState({ pendingTabId: null, pendingTitle: null });
   chrome.action.setBadgeText({ text: "" });
-  chrome.action.setTitle({ title: "Sarathi Meeting Bot" });
+  chrome.action.setTitle({ title: "Meeting Saathi" });
 }
 
 // Meet's "You've left the meeting" screen auto-redirects the SAME tab to
@@ -178,11 +192,25 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 // call, unlike the old design where the server only heard about a meeting
 // once it was already over.
 async function startMeetingRun(title) {
+  const [serverBaseUrl, userName] = await Promise.all([getServerBaseUrl(), getUserName()]);
   const formData = new FormData();
   formData.append("title", title);
-  const response = await fetch(`${SERVER_BASE_URL}/meetings/start`, { method: "POST", body: formData });
+  formData.append("user_name", userName);
+  const response = await fetch(`${serverBaseUrl}/meetings/start`, { method: "POST", body: formData });
   if (!response.ok) {
-    throw new Error(`server returned ${response.status} from /meetings/start`);
+    // The daily-limit rejection (see app/main.py's /meetings/start) carries
+    // a friendly, already-Hinglish message meant to be shown as-is --
+    // surface it instead of a generic "server returned 429" so the popup's
+    // existing `Could not start: ${result.error}` path shows something
+    // useful. Any other non-ok response falls back to the old generic text.
+    let message = `server returned ${response.status} from /meetings/start`;
+    try {
+      const body = await response.json();
+      if (body && body.message) message = body.message;
+    } catch {
+      // response body wasn't JSON -- keep the generic message above.
+    }
+    throw new Error(message);
   }
   const body = await response.json();
   return body.id;
@@ -226,22 +254,24 @@ async function startRecording(tabId, title) {
     notifyTab(tabId, { type: "SARATHI_RECORDING_STARTED" });
     return { ok: true };
   } catch (err) {
-    console.error("Sarathi Meeting Bot: failed to start recording.", err);
+    console.error("Meeting Saathi: failed to start recording.", err);
     // Clear any stale "click to arm" badge/tooltip left over from armTab()
     // -- whatever state prompted the click, it didn't result in a
     // recording, so there's nothing left to invite another click for.
     chrome.action.setBadgeText({ text: "" });
-    chrome.action.setTitle({ title: "Sarathi Meeting Bot" });
+    chrome.action.setTitle({ title: "Meeting Saathi" });
     const reason = String(err.message || err);
     if (runId) {
       // Best-effort, non-blocking -- a failed cancel call must never mask
       // or delay surfacing the original recording-start error below.
-      fetch(`${SERVER_BASE_URL}/meetings/${runId}/cancel`, { method: "POST" }).catch(() => {});
+      getServerBaseUrl()
+        .then((serverBaseUrl) => fetch(`${serverBaseUrl}/meetings/${runId}/cancel`, { method: "POST" }))
+        .catch(() => {});
     }
     notifyError(
       tabId,
       { type: "SARATHI_RECORDING_FAILED", reason },
-      "Sarathi Meeting Bot: recording failed to start",
+      "Meeting Saathi: recording failed to start",
       reason
     );
     return { ok: false, error: reason };
@@ -288,12 +318,14 @@ async function stopRecording() {
     // meeting ended -- it sits at chunk_processing/received forever,
     // showing "Recording" on the dashboard with a timer that never stops.
     if (runId) {
-      fetch(`${SERVER_BASE_URL}/meetings/${runId}/cancel`, { method: "POST" }).catch(() => {});
+      getServerBaseUrl()
+        .then((serverBaseUrl) => fetch(`${serverBaseUrl}/meetings/${runId}/cancel`, { method: "POST" }))
+        .catch(() => {});
     }
     notifyError(
       tabId,
       { type: "SARATHI_UPLOAD_FAILED", reason },
-      "Sarathi Meeting Bot: recording failed to save",
+      "Meeting Saathi: recording failed to save",
       `Upload failed (${reason}) -- is the local server running?`
     );
   }
@@ -368,7 +400,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       notifyError(
         activeTabId,
         { type: "SARATHI_CHUNK_UPLOAD_FAILED", sequence: message.sequence, reason: message.reason },
-        "Sarathi Meeting Bot: part of the recording was lost",
+        "Meeting Saathi: part of the recording was lost",
         `Chunk ${message.sequence} failed to upload (${message.reason}) -- some audio is missing from this meeting.`
       );
     })();

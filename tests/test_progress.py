@@ -43,19 +43,17 @@ def test_legacy_whole_file_path_has_no_recorded_signal():
 def test_generating_docs_label_lists_pending_documents():
     progress = describe_progress("generating_docs", timing={"extract_facts": 2.0, "generate_mom": 5.0})
 
-    assert "Requirement Sheet" in progress["label"]
-    assert "Discussion & Action Points" in progress["label"]
+    assert "Meeting Analysis" in progress["label"]
     assert "MOM" not in progress["label"]
 
 
-def test_generating_docs_label_when_all_three_generated():
+def test_generating_docs_label_when_both_generated():
     progress = describe_progress(
         "generating_docs",
         timing={
             "extract_facts": 2.0,
             "generate_mom": 5.0,
-            "generate_requirement_gathering": 5.0,
-            "generate_action_points": 5.0,
+            "generate_meeting_analysis": 5.0,
         },
     )
 
@@ -102,8 +100,8 @@ def test_status_hides_internal_states_behind_simple_labels():
 
 
 def test_eta_requires_history_for_every_remaining_stage():
-    timing = {"extract_facts": 1.0}  # 7 tail stages still remaining
-    history = {"generate_mom": {"count": 3, "mean": 4.0}}  # only 1 of the 7 known
+    timing = {"extract_facts": 1.0}  # 5 tail stages still remaining
+    history = {"generate_mom": {"count": 3, "mean": 4.0}}  # only 1 of the 5 known
 
     progress = describe_progress("generating_docs", timing=timing, history=history)
 

@@ -177,7 +177,7 @@ def main() -> None:
     parser.add_argument("--skip-whole-file", action="store_true", help="Skip the slow legacy whole-file benchmark")
     args = parser.parse_args()
 
-    with tempfile.TemporaryDirectory(prefix="sarathi_benchmark_") as tmp:
+    with tempfile.TemporaryDirectory(prefix="meeting_saathi_benchmark_") as tmp:
         tmp_dir = Path(tmp)
 
         if args.recording:

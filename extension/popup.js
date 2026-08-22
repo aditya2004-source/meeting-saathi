@@ -5,6 +5,37 @@ const micSectionEl = document.getElementById("micSection");
 const micStatusEl = document.getElementById("micStatus");
 const grantMicBtn = document.getElementById("grantMic");
 const openDashboardBtn = document.getElementById("openDashboard");
+const setupSectionEl = document.getElementById("setupSection");
+const userNameEl = document.getElementById("userName");
+const serverUrlEl = document.getElementById("serverUrl");
+const saveSetupBtn = document.getElementById("saveSetup");
+const setupStatusEl = document.getElementById("setupStatus");
+
+const DEFAULT_SERVER_BASE_URL = "http://localhost:8420";
+
+// Phase 1 (sharing with BA testers): a plain self-reported name, no
+// login/password -- sent with every /meetings/start call so the backend can
+// enforce a per-person daily meeting limit and show a "who's using this"
+// table on the dashboard (see app/db.py's count_runs_today()/usage_summary()).
+async function loadSetup() {
+  const { userName, serverBaseUrl } = await chrome.storage.local.get(["userName", "serverBaseUrl"]);
+  userNameEl.value = userName || "";
+  serverUrlEl.value = serverBaseUrl || "";
+  serverUrlEl.placeholder = `Server URL (default: ${DEFAULT_SERVER_BASE_URL})`;
+  // First-time users (no name saved yet) get the section expanded so they
+  // notice it, instead of it staying collapsed and silently blocking
+  // recording later with no clue why.
+  if (!userName) setupSectionEl.open = true;
+}
+
+saveSetupBtn.addEventListener("click", async () => {
+  const userName = userNameEl.value.trim();
+  const serverBaseUrl = serverUrlEl.value.trim();
+  await chrome.storage.local.set({ userName, serverBaseUrl });
+  setupStatusEl.textContent = "Saved.";
+  setupStatusEl.style.color = "#1a7a3c";
+  if (userName) setupSectionEl.open = false;
+});
 
 // Offscreen documents can't show the native microphone permission prompt
 // (a Chrome restriction on that document type) -- so without this,
@@ -33,7 +64,7 @@ async function refreshMicSection() {
   micSectionEl.style.display = "block";
   if (state === "denied") {
     micStatusEl.textContent =
-      "Microphone is blocked for this extension. Open chrome://settings/content/microphone, find Sarathi Meeting Bot under the blocked list, switch it to Allow, then reopen this popup.";
+      "Microphone is blocked for this extension. Open chrome://settings/content/microphone, find Meeting Saathi under the blocked list, switch it to Allow, then reopen this popup.";
     grantMicBtn.style.display = "none";
   } else {
     micStatusEl.textContent = "Your own voice won't be recorded until you grant microphone access (one-time).";
@@ -50,12 +81,25 @@ grantMicBtn.addEventListener("click", () => {
   chrome.tabs.create({ url: chrome.runtime.getURL("permissions.html") });
 });
 
-openDashboardBtn.addEventListener("click", () => {
-  chrome.tabs.create({ url: "http://localhost:8420/" });
+openDashboardBtn.addEventListener("click", async () => {
+  const { serverBaseUrl } = await chrome.storage.local.get("serverBaseUrl");
+  chrome.tabs.create({ url: serverBaseUrl || DEFAULT_SERVER_BASE_URL });
 });
 
+async function hasUserName() {
+  const { userName } = await chrome.storage.local.get("userName");
+  return Boolean(userName && userName.trim());
+}
+
+function blockForMissingName() {
+  setupSectionEl.open = true;
+  statusEl.textContent = "Pehle apna naam Setup section me save karo.";
+  statusEl.style.color = "#c0392b";
+  toggleBtn.textContent = "Start Recording";
+}
+
 function refreshStatus() {
-  chrome.runtime.sendMessage({ type: "GET_STATUS" }, (res) => {
+  chrome.runtime.sendMessage({ type: "GET_STATUS" }, async (res) => {
     if (res && res.recording) {
       statusEl.textContent = `Recording: ${res.title || "meeting"}`;
       statusEl.style.color = "#1a7a3c";
@@ -64,6 +108,12 @@ function refreshStatus() {
       // Opening this popup IS the one click Chrome requires (tabCapture
       // only allows starting in response to a genuine gesture on the
       // extension itself) -- arm immediately, no second click needed.
+      // Skipped entirely if no name is set yet -- starting a recording with
+      // no identity would bypass the daily-limit tracking on the backend.
+      if (!(await hasUserName())) {
+        blockForMissingName();
+        return;
+      }
       statusEl.textContent = "Starting recording…";
       statusEl.style.color = "#1a7a3c";
       toggleBtn.textContent = "Start Recording";
@@ -87,8 +137,8 @@ function refreshStatus() {
   });
 }
 
-toggleBtn.addEventListener("click", () => {
-  chrome.runtime.sendMessage({ type: "GET_STATUS" }, (res) => {
+toggleBtn.addEventListener("click", async () => {
+  chrome.runtime.sendMessage({ type: "GET_STATUS" }, async (res) => {
     if (res && res.recording) {
       chrome.runtime.sendMessage({ type: "MANUAL_STOP" }, (result) => {
         if (result && result.ok === false) {
@@ -99,6 +149,10 @@ toggleBtn.addEventListener("click", () => {
         }
       });
     } else {
+      if (!(await hasUserName())) {
+        blockForMissingName();
+        return;
+      }
       chrome.runtime.sendMessage({ type: "MANUAL_START", title: titleEl.value }, (result) => {
         if (result && result.ok === false) {
           statusEl.textContent = `Could not start: ${result.error || "unknown error"}`;
@@ -113,3 +167,4 @@ toggleBtn.addEventListener("click", () => {
 
 refreshStatus();
 refreshMicSection();
+loadSetup();

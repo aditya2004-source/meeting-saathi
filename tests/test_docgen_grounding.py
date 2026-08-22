@@ -25,12 +25,11 @@ def test_generate_documents_threads_attendees_and_date_into_grounding():
         {"attendees": ["Priya Shah"], "topics_discussed": [], "decisions": [], "action_items": [], "key_quotes": []}
     )
     mom_response = _fake_response({"title": "Minutes of Meeting", "markdown_body": "body"})
-    rg_response = _fake_response({"title": "Requirement Gathering Sheet", "rows": []})
-    ap_response = _fake_response({"title": "Action Points", "markdown_body": "body"})
+    analysis_response = _fake_response({"title": "Meeting Analysis", "markdown_body": "body"})
 
     with patch(
         "app.docgen.engine._client.models.generate_content",
-        side_effect=[extract_response, mom_response, rg_response, ap_response],
+        side_effect=[extract_response, mom_response, analysis_response],
     ) as mock_call:
         generate_documents(
             "Weekly Sync",
@@ -41,10 +40,10 @@ def test_generate_documents_threads_attendees_and_date_into_grounding():
 
     # First call is the extraction step (no attendees/meeting_date grounding
     # -- those are only added at the document-generation step); the
-    # remaining three (MOM/RG/AP, order not guaranteed since they run
-    # concurrently) must each carry the real roster and date verbatim.
+    # remaining two (MOM/Meeting Analysis, order not guaranteed since they
+    # run concurrently) must each carry the real roster and date verbatim.
     doc_calls = mock_call.call_args_list[1:]
-    assert len(doc_calls) == 3
+    assert len(doc_calls) == 2
     for call in doc_calls:
         contents = call.kwargs["contents"]
         assert "Priya Shah" in contents
@@ -57,11 +56,10 @@ def test_generate_documents_defaults_to_empty_attendees_when_not_provided():
         {"attendees": [], "topics_discussed": [], "decisions": [], "action_items": [], "key_quotes": []}
     )
     doc_response = _fake_response({"title": "t", "markdown_body": "b"})
-    rg_response = _fake_response({"title": "t", "rows": []})
 
     with patch(
         "app.docgen.engine._client.models.generate_content",
-        side_effect=[extract_response, doc_response, rg_response, doc_response],
+        side_effect=[extract_response, doc_response, doc_response],
     ) as mock_call:
         generate_documents("Weekly Sync", "[00:00:00] Priya Shah: hi")
 

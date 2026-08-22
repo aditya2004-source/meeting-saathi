@@ -39,16 +39,14 @@ def _install_fakes(monkeypatch, run_row, saved_files):
         saved_files["_meeting_date_seen_by_docgen"] = meeting_date
         return {
             "mom": {"markdown_body": "mom body"},
-            "requirement_gathering": {"markdown_body": "rg body"},
-            "action_points": {"markdown_body": "ap body"},
+            "meeting_analysis": {"markdown_body": "analysis body"},
         }
 
     monkeypatch.setattr(orchestrator_streaming.docgen_engine, "generate_documents", fake_generate_documents)
 
-    def fake_render(docs, mom_path, rg_path, ap_path, recorder=None):
+    def fake_render(docs, mom_path, analysis_path, recorder=None):
         mom_path.write_bytes(b"%PDF-fake")
-        rg_path.write_bytes(b"%PDF-fake")
-        ap_path.write_bytes(b"%PDF-fake")
+        analysis_path.write_bytes(b"%PDF-fake")
 
     monkeypatch.setattr(orchestrator_streaming, "render_documents_to_pdf", fake_render)
 

@@ -2,11 +2,11 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Sarathi Meeting Bot</title>
+  <title>Meeting Saathi</title>
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-  <h1>Sarathi Meeting Bot</h1>
+  <h1>Meeting Saathi</h1>
   <p class="muted">
     Meetings recorded by the Chrome extension show up here automatically.
     You don't need to do anything on this page day-to-day — it's just a
@@ -26,15 +26,25 @@
     </form>
   </details>
 
+  {% if usage %}
+  <h2>Usage by person</h2>
+  <table class="usage-table">
+    <tr><th>Name</th><th>Today</th><th>Total</th><th>Last active</th></tr>
+    {% for u in usage %}
+    <tr><td>{{ u.user_name }}</td><td>{{ u.today }}</td><td>{{ u.total }}</td><td>{{ u.last_active_display }}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+
   <h2>Meetings</h2>
   {% if not runs %}
-    <p class="muted">No meetings yet. Join a Google Meet with the Sarathi
+    <p class="muted">No meetings yet. Join a Google Meet with the Meeting Saathi
       Chrome extension installed and it'll appear here once it finishes.</p>
   {% endif %}
   {% for run in runs %}
   <div class="meeting-card state-{{ run.state }}" data-run-id="{{ run.id }}" data-state="{{ run.state }}" data-created-at="{{ run.created_at }}">
     <div class="meeting-card-top">
-      <div class="meeting-title">{{ run.title }}</div>
+      <div class="meeting-title">{{ run.title }}{% if run.user_name %} <span class="meeting-user">— {{ run.user_name }}</span>{% endif %}</div>
       <span class="badge status-badge status-{{ run.progress.status | lower }}">{{ run.progress.status }}</span>
     </div>
 
@@ -60,7 +70,13 @@
       {% if run.state == 'saved' and run.folder_path %}
         <div class="result-box">
           <span class="completed-banner">&#9989; Documents ready</span>
-          <code>{{ run.folder_path }}</code>
+          <div class="download-links">
+            <a href="/meetings/{{ run.id }}/files/MOM.pdf">MOM (PDF)</a>
+            <a href="/meetings/{{ run.id }}/files/MOM.md">MOM (Markdown)</a>
+            <a href="/meetings/{{ run.id }}/files/Meeting_Analysis.pdf">Meeting Analysis (PDF)</a>
+            <a href="/meetings/{{ run.id }}/files/Meeting_Analysis.md">Meeting Analysis (Markdown)</a>
+            <a href="/meetings/{{ run.id }}/files/transcript.txt">Full transcript</a>
+          </div>
         </div>
       {% endif %}
     </div>

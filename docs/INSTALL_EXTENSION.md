@@ -15,7 +15,7 @@ this is completely normal for Chrome and only takes a minute.
    /home/enjay/projects/sarathi-meeting-bot/extension
    ```
    (select the folder itself, not a file inside it)
-5. "Sarathi Meeting Bot" now appears in your extensions list, and its icon
+5. "Meeting Saathi" now appears in your extensions list, and its icon
    shows up in Chrome's toolbar (you may need to click the puzzle-piece icon
    in the toolbar and "pin" it to always see it).
 
@@ -27,7 +27,7 @@ removes the extension for some reason.
 
 1. Open https://meet.google.com and start or join any meeting (a solo test
    meeting with yourself works fine for testing).
-2. Once you're actually in the call, click the Sarathi extension's icon —
+2. Once you're actually in the call, click the Meeting Saathi extension's icon —
    this is what actually starts recording (Chrome requires this click; it's
    not just a status check). The popup should then say **"Recording: <your
    meeting title>"** and the toolbar icon should show a small red **REC**
@@ -40,7 +40,7 @@ removes the extension for some reason.
 
 Unpacked extensions occasionally get disabled after a Chrome restart or
 update. If the icon disappears or stops working: go back to
-`chrome://extensions`, find "Sarathi Meeting Bot", and toggle it back on
+`chrome://extensions`, find "Meeting Saathi", and toggle it back on
 (or repeat "Load unpacked" if it was removed entirely — your settings
 aren't lost, since there's nothing stored in the extension itself).
 
@@ -48,5 +48,5 @@ aren't lost, since there's nothing stored in the extension itself).
 
 If the extension's code is ever changed (a new feature, a bug fix), you
 don't need to reinstall it — just go to `chrome://extensions` and click the
-small reload icon (↻) on the Sarathi Meeting Bot card, or reload the whole
+small reload icon (↻) on the Meeting Saathi card, or reload the whole
 `chrome://extensions` page.

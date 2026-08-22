@@ -36,7 +36,7 @@ what went wrong.
 ## Where your documents land
 
 ```
-~/Downloads/Sarathi Meetings/<Meeting Title> - <YYYY-MM-DD HHmm>/
+~/Downloads/Meeting Saathi/<Meeting Title> - <YYYY-MM-DD HHmm>/
 ├── MOM.pdf                          <- share this one
 ├── Requirement_Gathering_Sheet.pdf   <- share this one
 ├── Action_Points.pdf                 <- share this one
@@ -65,7 +65,7 @@ without re-transcribing or re-diarizing):
 
 ```bash
 cd /home/enjay/projects/sarathi-meeting-bot
-python scripts/regenerate_docs.py "/home/enjay/Downloads/Sarathi Meetings/<folder name>/transcript.json"
+python scripts/regenerate_docs.py "/home/enjay/Downloads/Meeting Saathi/<folder name>/transcript.json"
 ```
 
 This overwrites `MOM.md`/`.pdf`, `Requirement_Gathering_Sheet.md`/`.pdf`, and

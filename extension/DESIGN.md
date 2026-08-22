@@ -287,7 +287,7 @@ expect to revisit it when Meet's UI changes.
   re-verification against a live call (open devtools, speak, confirm what
   actually toggles) whenever Meet's UI changes, and can silently stop
   working with no error, just a quiet fallback to "Speaker N". A handful
-  of `console.debug("[Sarathi] ...")` lines at the extraction decision
+  of `console.debug("[Meeting Saathi] ...")` lines at the extraction decision
   points exist specifically so a real test's DevTools console can show
   what's actually being seen/rejected, rather than guessing again.
 - Screen-share mode reflows/shrinks tiles and may hide the indicator
@@ -357,7 +357,7 @@ who didn't get picked up by tile-speaking-indicator scraping.
   structure/class names are not a stable API and can change across
   releases — `findPeoplePanelToggleButton()`/`readPeoplePanelRoster()`
   need re-verification against a live multi-participant call before being
-  fully trusted. The same `console.debug("[Sarathi] ...")` instrumentation
+  fully trusted. The same `console.debug("[Meeting Saathi] ...")` instrumentation
   applies here.
 - If the toggle button can't be found at all, this silently falls back to
   a passive read (only picks up a roster if the user already has the panel

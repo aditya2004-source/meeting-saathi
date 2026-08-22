@@ -158,7 +158,7 @@ explicit request, since Claude's API has no meaningful free tier and this
 project has a hard "no paid dependency" requirement. `huggingface_token`
 is separately free too (diarization model access, not inference billing).
 `base_storage_dir` defaults to
-`~/Downloads/Sarathi Meetings` — chosen over `~/Documents` specifically
+`~/Downloads/Meeting Saathi` — chosen over `~/Documents` specifically
 because saving to Downloads was an explicit requirement (everything lands
 somewhere the user already expects downloaded/generated files to appear,
 with no manual save step). Note this default only applies going forward —

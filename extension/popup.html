@@ -12,7 +12,7 @@
 </style>
 </head>
 <body>
-  <h3>Sarathi Meeting Bot</h3>
+  <h3>Meeting Saathi</h3>
   <div class="status" id="status">Checking status&hellip;</div>
   <div id="micSection" style="display: none; margin-bottom: 8px;">
     <div class="status" id="micStatus" style="color: #c0392b;"></div>
@@ -27,6 +27,17 @@
     after you join a call. After that, everything is automatic: it stops
     when you leave, uploads, and generates your documents on its own.
   </p>
+
+  <details id="setupSection" style="margin-top: 10px;">
+    <summary style="cursor: pointer; color: #444; font-size: 0.85em;">Setup (name &amp; server)</summary>
+    <div style="margin-top: 8px;">
+      <input type="text" id="userName" placeholder="Your name">
+      <input type="text" id="serverUrl" placeholder="Server URL (e.g. http://localhost:8420)">
+      <button id="saveSetup" style="background: #444;">Save</button>
+      <div class="status" id="setupStatus"></div>
+    </div>
+  </details>
+
   <script src="popup.js"></script>
 </body>
 </html>

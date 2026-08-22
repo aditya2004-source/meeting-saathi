@@ -1,4 +1,4 @@
-# Sarathi Meeting Bot — Project Overview
+# Meeting Saathi — Project Overview
 
 *A plain-language summary of what has been built, why, and what it needs to run at full scale.*
 
@@ -6,7 +6,7 @@
 
 ## 1. What is this?
 
-Sarathi Meeting Bot is a tool that sits quietly in the background during a
+Meeting Saathi is a tool that sits quietly in the background during a
 Google Meet client call and automatically produces three ready-to-send
 documents once the meeting ends:
 
@@ -30,7 +30,7 @@ were discussed, and note down the action items. This is:
 - **Easy to get wrong** — details get missed, especially in longer calls
   with multiple speakers.
 
-Sarathi Meeting Bot removes this manual step entirely. The documents are
+Meeting Saathi removes this manual step entirely. The documents are
 ready within minutes of the call ending, in a consistent professional
 format, every time.
 

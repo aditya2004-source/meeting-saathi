@@ -1,8 +1,18 @@
-# `app/docgen/` — transcript → MOM / Requirement Gathering Sheet / Action Points
+# `app/docgen/` — transcript → MOM / Meeting Analysis
 
-Turns a speaker-labeled transcript into the three documents saved to the
+Turns a speaker-labeled transcript into the documents saved to the
 meeting's folder, using Gemini (Google's API, free tier) as the only
 external API in the system.
+
+**Phase 1 status (sharing with BA testers):** only MOM and a new "Meeting
+Analysis" doc (`generate_prompt.py: MEETING_ANALYSIS_SYSTEM_PROMPT`) are
+actually generated right now — see `engine.py: generate_documents()`. The
+Requirement Gathering Sheet and Action Points prompts/schemas below are
+still fully implemented and described as before, just not called from
+`generate_documents()` for the moment (to save Gemini quota while a small
+group of testers tries this out); re-enabling them is a small addition to
+that function's `ThreadPoolExecutor` block, not a rewrite. Everything else
+in this doc describes the underlying mechanism, which is unchanged.
 
 **Provider history:** this originally used Claude (Anthropic) via forced
 tool-calling. Switched to Gemini specifically to avoid any paid API at
@@ -120,7 +130,7 @@ Re-runs `generate_documents()` + `markdown_to_pdf()` against an existing
 `transcript.json` without re-transcribing or re-diarizing — useful for
 iterating on prompts, and the documented recovery path when the pipeline
 died after transcription but before doc generation. It must be kept in
-sync with `generate_documents()`'s returned dict shape (currently `mom`,
-`requirement_gathering`, `action_points`, each exposing `markdown_body`) —
-there's no indirection between the two, by design, to keep this script
-trivial to read.
+sync with `generate_documents()`'s returned dict shape (currently `mom`
+and `meeting_analysis`, each exposing `markdown_body`) — there's no
+indirection between the two, by design, to keep this script trivial to
+read.

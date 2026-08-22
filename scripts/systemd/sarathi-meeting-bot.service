@@ -1,5 +1,5 @@
 [Unit]
-Description=Sarathi Meeting Bot server
+Description=Meeting Saathi server
 After=network.target
 
 [Service]
