@@ -103,10 +103,16 @@ function blockForMissingName() {
   statusEl.textContent = "Pehle apna naam Setup section me save karo.";
   statusEl.style.color = "#c0392b";
   toggleBtn.textContent = "Start Recording";
+  toggleBtn.disabled = false;
 }
 
 function refreshStatus() {
   chrome.runtime.sendMessage({ type: "GET_STATUS" }, async (res) => {
+    // The one place that always re-enables the button, regardless of which
+    // click-handler branch got here -- refreshStatus() is the "settle"
+    // step every success path (and blockForMissingName()/explicit error
+    // branches for the rest) eventually reaches.
+    toggleBtn.disabled = false;
     if (res && res.recording) {
       statusEl.textContent = `Recording: ${res.title || "meeting"}`;
       statusEl.style.color = "#1a7a3c";
@@ -135,12 +141,25 @@ function refreshStatus() {
 }
 
 toggleBtn.addEventListener("click", async () => {
+  // Without this, clicking repeatedly while a stop/start is already
+  // in-flight (confirmed in production: a slow offscreen-document
+  // recovery attempt made the popup look "stuck," and 10-20 rapid clicks
+  // each fired their own redundant MANUAL_STOP/ARM_RECORDING call,
+  // stacking up concurrent work instead of just waiting for the first
+  // one) -- disable immediately, only re-enabled by refreshStatus() once
+  // a real result comes back.
+  if (toggleBtn.disabled) return;
+  toggleBtn.disabled = true;
+
   chrome.runtime.sendMessage({ type: "GET_STATUS" }, async (res) => {
     if (res && res.recording) {
+      statusEl.textContent = "Stopping…";
+      statusEl.style.color = "#1a7a3c";
       chrome.runtime.sendMessage({ type: "MANUAL_STOP" }, (result) => {
         if (result && result.ok === false) {
           statusEl.textContent = `Upload failed: ${result.error || result.reason || "unknown error"}`;
           statusEl.style.color = "#c0392b";
+          toggleBtn.disabled = false;
         } else {
           refreshStatus();
         }
@@ -162,6 +181,7 @@ toggleBtn.addEventListener("click", async () => {
           statusEl.textContent = `Could not start: ${result.error || result.reason || "unknown error"}`;
           statusEl.style.color = "#c0392b";
           toggleBtn.textContent = "Start Recording";
+          toggleBtn.disabled = false;
         } else {
           refreshStatus();
         }
@@ -175,6 +195,7 @@ toggleBtn.addEventListener("click", async () => {
         if (result && result.ok === false) {
           statusEl.textContent = `Could not start: ${result.error || "unknown error"}`;
           statusEl.style.color = "#c0392b";
+          toggleBtn.disabled = false;
         } else {
           refreshStatus();
         }
