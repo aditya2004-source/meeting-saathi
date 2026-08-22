@@ -288,28 +288,13 @@ async function startRecording(tabId, title) {
   }
 }
 
-async function stopRecording() {
-  const { activeTabId, runId } = await getState();
-  if (activeTabId === null) return { ok: false, reason: "not recording" };
-  const tabId = activeTabId;
-  // No speakerEvents/attendeeRoster passed here -- offscreen.js already has
-  // runId from START_RECORDING, and pulls a fresh snapshot of each via
-  // GET_SPEAKER_EVENTS_SNAPSHOT/GET_ROSTER_SNAPSHOT right before every
-  // chunk/finalize upload (including this terminal one), so it's always
-  // current as of the actual upload moment rather than a possibly-stale
-  // value passed here.
-  let result;
-  try {
-    result = await chrome.runtime.sendMessage({ target: "offscreen", type: "STOP_RECORDING" });
-  } catch (err) {
-    // The offscreen document is gone -- e.g. the extension was reloaded/
-    // updated mid-meeting, which tears down offscreen documents outright
-    // (confirmed in production: this exact case left a run stuck showing
-    // "Recording" with an ever-increasing elapsed timer forever, since the
-    // uncaught rejection here used to skip everything below, including the
-    // /cancel call). Treat it the same as "nothing to stop."
-    result = { ok: false, reason: "offscreen document unavailable" };
-  }
+// Shared tail of "a recording has just ended, one way or another": clears
+// local state/badge and reports the outcome, either via a manual/automatic
+// STOP_RECORDING round-trip (stopRecording() below) or when offscreen.js
+// reports its capture died on its own (CAPTURE_STREAM_DIED handler below)
+// -- both need the exact same cleanup + notify-or-cancel logic, just
+// starting from a different trigger.
+async function _settleAfterRecordingEnds(tabId, runId, result) {
   await setState({
     activeTabId: null,
     currentTitle: null,
@@ -348,6 +333,31 @@ async function stopRecording() {
   return result;
 }
 
+async function stopRecording() {
+  const { activeTabId, runId } = await getState();
+  if (activeTabId === null) return { ok: false, reason: "not recording" };
+  const tabId = activeTabId;
+  // No speakerEvents/attendeeRoster passed here -- offscreen.js already has
+  // runId from START_RECORDING, and pulls a fresh snapshot of each via
+  // GET_SPEAKER_EVENTS_SNAPSHOT/GET_ROSTER_SNAPSHOT right before every
+  // chunk/finalize upload (including this terminal one), so it's always
+  // current as of the actual upload moment rather than a possibly-stale
+  // value passed here.
+  let result;
+  try {
+    result = await chrome.runtime.sendMessage({ target: "offscreen", type: "STOP_RECORDING" });
+  } catch (err) {
+    // The offscreen document is gone -- e.g. the extension was reloaded/
+    // updated mid-meeting, which tears down offscreen documents outright
+    // (confirmed in production: this exact case left a run stuck showing
+    // "Recording" with an ever-increasing elapsed timer forever, since the
+    // uncaught rejection here used to skip everything below, including the
+    // /cancel call). Treat it the same as "nothing to stop."
+    result = { ok: false, reason: "offscreen document unavailable" };
+  }
+  return _settleAfterRecordingEnds(tabId, runId, result);
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target === "offscreen") return; // not for us, offscreen.js handles it
 
@@ -379,6 +389,23 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // content_script.js's DOM-based leave detection. Finalizes through the
     // same stopRecording() path as a normal MEETING_LEFT.
     stopRecording();
+    return;
+  }
+  if (message.type === "CAPTURE_STREAM_DIED") {
+    // From offscreen.js: a mid-meeting recording cycle failed to restart
+    // (confirmed in production -- see offscreen.js's handleCycleStop()) --
+    // typically the tab's capture stream ending on its own after sitting
+    // backgrounded a long time. offscreen.js already tore itself down and
+    // did its own best-effort final upload before sending this, so this
+    // must NOT re-send STOP_RECORDING (offscreen has nothing left to stop
+    // -- that produced the confusing "not recording" error this replaces).
+    // Just settle local state/badge and report whatever offscreen's final
+    // upload attempt actually returned.
+    (async () => {
+      const { activeTabId, runId } = await getState();
+      if (activeTabId === null) return;
+      await _settleAfterRecordingEnds(activeTabId, runId, message.result);
+    })();
     return;
   }
   if (message.type === "ARM_RECORDING") {

@@ -127,33 +127,60 @@ function cycleRecorder(isFinal) {
   mediaRecorder.stop();
 }
 
+function _tearDownCapture() {
+  capturedStreams.forEach((stream) => stream.getTracks().forEach((track) => track.stop()));
+  const closing = audioContext ? audioContext.close() : Promise.resolve();
+  audioContext = null;
+  mediaRecorder = null;
+  return closing;
+}
+
 async function handleCycleStop() {
   const blob = new Blob(currentChunkBlobs, { type: "audio/webm" });
   const finishedSequence = sequence;
   sequence += 1;
   const isFinal = stopRequested;
+  let streamDied = false;
 
   if (isFinal) {
     // No more audio needed -- tear down capture now, before the upload
     // (which can take a while) rather than after.
-    capturedStreams.forEach((stream) => stream.getTracks().forEach((track) => track.stop()));
-    if (audioContext) {
-      await audioContext.close();
-      audioContext = null;
-    }
-    mediaRecorder = null;
+    await _tearDownCapture();
   } else {
-    // Start the next cycle immediately -- before uploading the blob that
-    // just finished -- to keep the recording gap as small as possible.
-    startRecorderCycle();
-    scheduleNextCycle();
+    try {
+      // Start the next cycle immediately -- before uploading the blob that
+      // just finished -- to keep the recording gap as small as possible.
+      startRecorderCycle();
+      scheduleNextCycle();
+    } catch (err) {
+      // The source stream has ended -- e.g. Chrome silently revoked tab
+      // capture after the tab sat backgrounded for a long time after the
+      // meeting ended. Starting a new MediaRecorder on a dead stream
+      // throws here. Confirmed in production: this exception used to just
+      // vanish (an unhandled rejection inside a MediaRecorder.onstop
+      // handler), leaving the recording permanently stuck -- no more
+      // cycles, no more uploads, no notification -- until a manual stop
+      // click later failed with a confusing "not recording" error, because
+      // this very recorder was the one left sitting inactive. Treat this
+      // chunk as the final one instead of trying (and failing) to continue.
+      console.error("Meeting Saathi: could not start next recording cycle -- source stream likely ended.", err);
+      streamDied = true;
+      await _tearDownCapture();
+    }
   }
 
-  const result = await uploadChunk(finishedSequence, blob, isFinal);
+  const result = await uploadChunk(finishedSequence, blob, isFinal || streamDied);
   if (isFinal) {
     const resolve = stopResolve;
     stopResolve = null;
     if (resolve) resolve(result);
+  } else if (streamDied) {
+    // Nobody's waiting on a stopRecording() promise -- this wasn't a
+    // manual/automatic stop request, the capture just died on its own.
+    // Tell background.js directly (not via the STOP_RECORDING round-trip --
+    // there's nothing left here to stop) so it clears its own state/badge
+    // instead of showing "Recording" forever.
+    chrome.runtime.sendMessage({ type: "CAPTURE_STREAM_DIED", result }).catch(() => {});
   }
 }
 
