@@ -8,8 +8,11 @@ and the `/meetings/{id}/status` JSON endpoint.
 
 Design choices worth calling out:
 - A percent/ETA is only ever given for the *bounded* post-meeting tail
-  (extract facts -> generate 2 docs -> render 2 PDFs -> save). While a
-  meeting is still being recorded (chunk_processing, or legacy
+  (extract facts -> generate+render+write MOM and Meeting Analysis, each
+  document rendered and written to its final folder as soon as its own
+  Gemini call completes -- see app.orchestrator_streaming.finalize_run() --
+  rather than waiting for both before either is written). While a meeting
+  is still being recorded (chunk_processing, or legacy
   transcribing/diarizing), duration is fundamentally open-ended -- a
   fabricated countdown there would be actively misleading, so this
   deliberately shows no percent/ETA at all in that phase, only a live
@@ -17,25 +20,33 @@ Design choices worth calling out:
 - An ETA is only shown when the persisted history has data for *every*
   remaining tail stage. Treating a not-yet-seen stage as "0s" would silently
   understate the true remaining time, which is worse than showing nothing.
+- `folder_path` is surfaced regardless of terminal state (not gated on
+  state == "saved") -- the folder now exists and can hold individual
+  finished documents well before the run is fully "saved"; app.main.py
+  separately computes *which* files are actually present yet
+  (`available_files`) so the dashboard can offer a document for download
+  the moment it exists, without waiting for its sibling.
 """
 from typing import Optional
 
-# Timing.json keys that make up the bounded post-meeting tail, in roughly
-# the order they occur (extract_facts always finishes before the 2
-# generate_* calls start; the 2 render_*_pdf calls run one after another
-# once both generate_* calls finish; save_meeting_folder is last). Shared with
-# orchestrator.py/orchestrator_streaming.py, which use this same list to
-# decide which of TimingRecorder's keys are worth folding into the
-# persisted cross-run history (app.pipeline.timing.record_stage_durations)
-# -- chunk_transcribe/chunk_pyannote/etc. aren't part of the bounded tail
-# and are intentionally excluded from that history.
+# Timing.json keys that make up the bounded post-meeting tail. extract_facts
+# always finishes first; the two generate_*/render_*_pdf pairs after that
+# each complete independently, in whichever order their Gemini call actually
+# finishes (see app.docgen.engine.generate_documents()'s on_document_ready
+# callback) -- there's no longer a single final "save" stage, since each
+# document is written to its final folder as it's rendered, not batched at
+# the end. Shared with orchestrator.py/orchestrator_streaming.py, which use
+# this same list to decide which of TimingRecorder's keys are worth folding
+# into the persisted cross-run history
+# (app.pipeline.timing.record_stage_durations) -- chunk_transcribe/
+# chunk_pyannote/etc. aren't part of the bounded tail and are intentionally
+# excluded from that history.
 TAIL_STAGE_KEYS = [
     "extract_facts",
     "generate_mom",
     "generate_meeting_analysis",
     "render_mom_pdf",
     "render_meeting_analysis_pdf",
-    "save_meeting_folder",
 ]
 
 _GENERATE_STAGE_LABELS = [
@@ -164,5 +175,5 @@ def describe_progress(
         "eta_seconds": eta_seconds,
         "recorded": _recorded_signal(state, chunk_durations),
         "completed": state == "saved",
-        "folder_path": folder_path if state == "saved" else None,
+        "folder_path": folder_path,
     }

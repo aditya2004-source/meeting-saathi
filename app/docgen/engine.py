@@ -1,6 +1,6 @@
 import json
-from concurrent.futures import ThreadPoolExecutor
-from typing import Optional
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Callable, Optional
 
 from google import genai
 from google.genai import types
@@ -174,6 +174,7 @@ def generate_documents(
     attendees: Optional[list[str]] = None,
     meeting_date: str = "",
     recorder: Optional[TimingRecorder] = None,
+    on_document_ready: Optional[Callable[[str, dict], None]] = None,
 ) -> dict:
     """Two-call pattern: Call 1 extracts structured facts (forced JSON
     schema), Call 2 runs twice (forced JSON schema each) to write MOM and
@@ -181,6 +182,13 @@ def generate_documents(
     transcript, so the two are independent of each other and run
     concurrently (network-bound Gemini calls release the GIL, so real
     threads pay off here without needing an asyncio rewrite).
+
+    `on_document_ready`, if given, is called as `(key, doc)` -- key being
+    "mom" or "meeting_analysis" -- the moment *that one* finishes, in
+    whichever order they actually complete, rather than making the caller
+    wait for both before it can do anything with either. Lets a caller
+    (see app/orchestrator_streaming.py) render/save/serve one document
+    while the other is still generating, instead of both-or-nothing.
 
     Phase 1 (sharing with BA testers): the Requirement Gathering Sheet and
     Action Points generators are intentionally not called here -- their
@@ -215,11 +223,16 @@ def generate_documents(
         analysis_future = pool.submit(
             _generate, "generate_meeting_analysis", MEETING_ANALYSIS_SYSTEM_PROMPT, MEETING_ANALYSIS_RESPONSE_SCHEMA
         )
-        mom = mom_future.result()
-        meeting_analysis = analysis_future.result()
+        future_keys = {mom_future: "mom", analysis_future: "meeting_analysis"}
+        results: dict[str, dict] = {}
+        for future in as_completed(future_keys):
+            key = future_keys[future]
+            results[key] = future.result()
+            if on_document_ready is not None:
+                on_document_ready(key, results[key])
 
     return {
         "facts": facts,
-        "mom": mom,
-        "meeting_analysis": meeting_analysis,
+        "mom": results["mom"],
+        "meeting_analysis": results["meeting_analysis"],
     }

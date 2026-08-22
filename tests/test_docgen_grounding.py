@@ -51,6 +51,36 @@ def test_generate_documents_threads_attendees_and_date_into_grounding():
         assert "28 July 2026, 2:30 PM IST" in contents
 
 
+def test_generate_documents_calls_on_document_ready_for_each_document():
+    # Lets a caller (app/orchestrator_streaming.py) render/save one
+    # document the moment it's ready instead of waiting for both.
+    extract_response = _fake_response(
+        {"attendees": [], "topics_discussed": [], "decisions": [], "action_items": [], "key_quotes": []}
+    )
+    mom_response = _fake_response({"title": "Minutes of Meeting", "markdown_body": "mom body"})
+    analysis_response = _fake_response({"title": "Meeting Analysis", "markdown_body": "analysis body"})
+
+    ready_calls = []
+
+    with patch(
+        "app.docgen.engine._client.models.generate_content",
+        side_effect=[extract_response, mom_response, analysis_response],
+    ):
+        result = generate_documents(
+            "Weekly Sync",
+            "[00:00:00] Priya Shah: hi",
+            on_document_ready=lambda key, doc: ready_calls.append((key, doc["markdown_body"])),
+        )
+
+    assert set(k for k, _ in ready_calls) == {"mom", "meeting_analysis"}
+    assert ("mom", "mom body") in ready_calls
+    assert ("meeting_analysis", "analysis body") in ready_calls
+    # The returned dict is unaffected by the callback -- still the same
+    # both-documents shape as before.
+    assert result["mom"]["markdown_body"] == "mom body"
+    assert result["meeting_analysis"]["markdown_body"] == "analysis body"
+
+
 def test_generate_documents_defaults_to_empty_attendees_when_not_provided():
     extract_response = _fake_response(
         {"attendees": [], "topics_discussed": [], "decisions": [], "action_items": [], "key_quotes": []}

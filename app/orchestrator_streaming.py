@@ -25,7 +25,7 @@ from app import db
 from app.chunked_state import drop as drop_state, get_or_create
 from app.config import settings
 from app.docgen import engine as docgen_engine
-from app.docgen.render_pdf import render_documents_to_pdf
+from app.docgen.render_pdf import markdown_to_pdf
 from app.pipeline.diarize import diarize_chunk, probe_duration_seconds
 from app.pipeline.download import working_dir_for
 from app.pipeline.merge import build_transcript, render_plain_text
@@ -37,7 +37,14 @@ from app.pipeline.speaker_names import (
 )
 from app.pipeline.timing import TimingRecorder, record_stage_durations, timed
 from app.progress import TAIL_STAGE_KEYS
-from app.storage import save_meeting_folder
+from app.storage import create_meeting_folder, write_meeting_file
+
+# Maps generate_documents()'s on_document_ready `key` to the (markdown,
+# pdf) filenames each document gets written under in the meeting folder.
+_DOC_FILENAMES = {
+    "mom": ("MOM.md", "MOM.pdf"),
+    "meeting_analysis": ("Meeting_Analysis.md", "Meeting_Analysis.pdf"),
+}
 
 # States a run may already be in by the time a chunk arrives without needing
 # to (re-)enter "chunk_processing" -- e.g. a late-arriving retry after
@@ -246,13 +253,43 @@ def finalize_run(run_id: str) -> None:
     transcript_text = render_plain_text(transcript)
 
     db.update_run(run_id, state="generating_docs")
+
+    # Created and recorded on the run immediately -- not at the very end --
+    # so the folder (and whichever documents have landed in it so far) is
+    # visible to the dashboard/download route from this point on, well
+    # before document generation finishes. See app/storage.py's
+    # create_meeting_folder()/write_meeting_file() for why this no longer
+    # writes everything atomically in one shot.
+    folder = create_meeting_folder(settings.base_storage_dir, run["title"], now)
+    db.update_run(run_id, folder_path=str(folder))
+    write_meeting_file(folder, "transcript.json", json.dumps(transcript, indent=2))
+    write_meeting_file(folder, "transcript.txt", transcript_text)
+    # Note: unlike orchestrator.py's legacy path, keep_raw_recording isn't
+    # supported here yet -- the "raw recording" would need to be a
+    # concatenation of working/<run_id>/chunks/*.webm, which (unlike a
+    # single MediaRecorder session's output) may not remux into one valid
+    # playable file across chunk boundaries. Not required for this
+    # redesign's scope; the durable backup remains transcript.json/.txt.
+
+    def _on_document_ready(key: str, doc: dict) -> None:
+        # Fires the moment *this one* document's Gemini call completes,
+        # independent of its sibling -- MOM can be rendered, written, and
+        # downloadable while Meeting Analysis is still generating (or vice
+        # versa), instead of both needing to finish before either is
+        # visible.
+        md_name, pdf_name = _DOC_FILENAMES[key]
+        write_meeting_file(folder, md_name, doc["markdown_body"])
+        with timed(recorder, f"render_{key}_pdf"):
+            markdown_to_pdf(doc["markdown_body"], folder / pdf_name)
+
     if segments:
-        docs = docgen_engine.generate_documents(
+        docgen_engine.generate_documents(
             run["title"],
             transcript_text,
             attendees=attendees,
             meeting_date=transcript["meeting_date_display"],
             recorder=recorder,
+            on_document_ready=_on_document_ready,
         )
     else:
         # No transcribed speech at all (e.g. a short test call where nobody
@@ -261,31 +298,10 @@ def finalize_run(run_id: str) -> None:
         # crashing json.loads(). A "nothing was said" document is both
         # truthful and avoids that failure mode entirely.
         docs = docgen_engine.empty_meeting_documents(run["title"], transcript["meeting_date_display"])
+        _on_document_ready("mom", docs["mom"])
+        _on_document_ready("meeting_analysis", docs["meeting_analysis"])
 
-    db.update_run(run_id, state="rendering")
-    mom_pdf_path = work_dir / "MOM.pdf"
-    meeting_analysis_pdf_path = work_dir / "Meeting_Analysis.pdf"
-    render_documents_to_pdf(docs, mom_pdf_path, meeting_analysis_pdf_path, recorder=recorder)
-
-    db.update_run(run_id, state="saving")
-    files: dict[str, bytes | str] = {
-        "MOM.md": docs["mom"]["markdown_body"],
-        "MOM.pdf": mom_pdf_path.read_bytes(),
-        "Meeting_Analysis.md": docs["meeting_analysis"]["markdown_body"],
-        "Meeting_Analysis.pdf": meeting_analysis_pdf_path.read_bytes(),
-        "transcript.json": json.dumps(transcript, indent=2),
-        "transcript.txt": transcript_text,
-    }
-    # Note: unlike orchestrator.py's legacy path, keep_raw_recording isn't
-    # supported here yet -- the "raw recording" would need to be a
-    # concatenation of working/<run_id>/chunks/*.webm, which (unlike a
-    # single MediaRecorder session's output) may not remux into one valid
-    # playable file across chunk boundaries. Not required for this
-    # redesign's scope; the durable backup remains transcript.json/.txt.
-
-    with timed(recorder, "save_meeting_folder"):
-        folder = save_meeting_folder(settings.base_storage_dir, run["title"], now, files)
-    db.update_run(run_id, state="saved", folder_path=str(folder))
+    db.update_run(run_id, state="saved")
 
     # Folds this run's bounded post-meeting-tail stage durations into the
     # small persisted history (see app/progress.py) so a *future* run's

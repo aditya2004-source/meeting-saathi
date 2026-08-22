@@ -76,6 +76,18 @@ def test_saved_state_is_100_percent_and_completed_with_folder():
     assert progress["folder_path"] == "/some/folder"
 
 
+def test_folder_path_surfaces_before_saved_for_incremental_delivery():
+    # The meeting folder is now created (and its path recorded) well
+    # before the run is fully "saved" -- individual documents can exist
+    # and be downloadable while others are still generating (see
+    # app.orchestrator_streaming.finalize_run()). folder_path must not be
+    # withheld just because the run isn't finished yet.
+    progress = describe_progress("generating_docs", folder_path="/some/folder")
+
+    assert progress["folder_path"] == "/some/folder"
+    assert progress["completed"] is False
+
+
 def test_failed_state_shows_error_message():
     progress = describe_progress("failed", error_message="disk full")
 
@@ -100,8 +112,8 @@ def test_status_hides_internal_states_behind_simple_labels():
 
 
 def test_eta_requires_history_for_every_remaining_stage():
-    timing = {"extract_facts": 1.0}  # 5 tail stages still remaining
-    history = {"generate_mom": {"count": 3, "mean": 4.0}}  # only 1 of the 5 known
+    timing = {"extract_facts": 1.0}  # 4 tail stages still remaining
+    history = {"generate_mom": {"count": 3, "mean": 4.0}}  # only 1 of the 4 known
 
     progress = describe_progress("generating_docs", timing=timing, history=history)
 
@@ -109,8 +121,8 @@ def test_eta_requires_history_for_every_remaining_stage():
 
 
 def test_eta_computed_when_history_covers_all_remaining_stages():
-    timing = {k: 1.0 for k in TAIL_STAGE_KEYS[:-1]}  # only save_meeting_folder remains
-    history = {"save_meeting_folder": {"count": 5, "mean": 2.5}}
+    timing = {k: 1.0 for k in TAIL_STAGE_KEYS[:-1]}  # only the last stage remains
+    history = {TAIL_STAGE_KEYS[-1]: {"count": 5, "mean": 2.5}}
 
     progress = describe_progress("saving", timing=timing, history=history)
 

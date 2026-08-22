@@ -68,6 +68,23 @@ def _load_chunk_durations(work_dir: Path) -> dict | None:
         return None
 
 
+def _available_files(folder_path: str | None) -> list[str]:
+    """Which of the allowlisted document files actually exist yet in a
+    meeting's folder -- computed fresh from the filesystem (not a DB flag),
+    since documents are now written incrementally as each one finishes
+    generating (see app.orchestrator_streaming.finalize_run()) rather than
+    all appearing at once when the run reaches state "saved". Used by both
+    the dashboard template and /meetings/{id}/status so a document shows up
+    for download the moment it exists, without waiting for its sibling.
+    """
+    if not folder_path:
+        return []
+    folder = Path(folder_path)
+    if not folder.is_dir():
+        return []
+    return sorted(name for name in _DOWNLOADABLE_FILES if (folder / name).is_file())
+
+
 def _progress_for_run(run: dict) -> dict:
     """Live status shown on the `/` page and returned by
     /meetings/{id}/status -- see app/progress.py for what each field means
@@ -80,7 +97,7 @@ def _progress_for_run(run: dict) -> dict:
     timing = load_timing(work_dir) if work_dir.exists() else None
     chunk_durations = _load_chunk_durations(work_dir) if work_dir.exists() else None
     history = load_stage_history(_STAGE_HISTORY_PATH)
-    return describe_progress(
+    progress = describe_progress(
         state=run["state"],
         timing=timing,
         chunk_durations=chunk_durations,
@@ -88,6 +105,14 @@ def _progress_for_run(run: dict) -> dict:
         folder_path=run.get("folder_path"),
         error_message=run.get("error_message"),
     )
+    available_files = _available_files(run.get("folder_path"))
+    progress["available_files"] = available_files
+    # Each of the two documents (MOM, Meeting Analysis) produces exactly
+    # one .pdf -- counting those (not the .md siblings or transcript files)
+    # gives "how many of the 2 documents are ready" for the dashboard's
+    # partial-progress banner, without the template needing to know that.
+    progress["documents_ready_count"] = sum(1 for f in available_files if f.endswith(".pdf"))
+    return progress
 
 
 @app.get("/")
@@ -270,17 +295,24 @@ def cancel_meeting(run_id: str, reason: str = Form("")):
 
 @app.get("/meetings/{run_id}/files/{filename}")
 def download_meeting_file(run_id: str, filename: str):
-    """Serves one file from a saved meeting's folder -- added for remote
+    """Serves one file from a meeting's folder -- added for remote
     deployments (Railway etc.) where nobody has direct filesystem access to
     run["folder_path"] the way a local-machine user can just open their own
     Downloads folder. `filename` is checked against `_DOWNLOADABLE_FILES`
     rather than trusted as a path segment, so this can't be used to read
     arbitrary files off the server.
+
+    Deliberately NOT gated on run["state"] == "saved" -- documents are
+    written into the folder incrementally as each one finishes generating
+    (see app.orchestrator_streaming.finalize_run()), so a document can be
+    genuinely ready and worth serving well before the whole run is
+    "saved". Whether the specific requested *file* actually exists on disk
+    is the real source of truth for whether it's ready.
     """
     if filename not in _DOWNLOADABLE_FILES:
         return JSONResponse({"error": "not found"}, status_code=404)
     run = db.get_run(run_id)
-    if run is None or run["state"] != "saved" or not run.get("folder_path"):
+    if run is None or not run.get("folder_path"):
         return JSONResponse({"error": "not found"}, status_code=404)
     file_path = Path(run["folder_path"]) / filename
     if not file_path.is_file():

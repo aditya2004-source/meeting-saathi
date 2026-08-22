@@ -131,6 +131,7 @@ h2 { margin-top: 2rem; }
   border-radius: 6px;
 }
 .completed-banner { color: #22863a; font-weight: 600; display: block; margin-bottom: 0.3rem; }
+.completed-banner.partial { color: #9c4221; }
 .result-box code {
   font-size: 0.8rem;
   color: #333;

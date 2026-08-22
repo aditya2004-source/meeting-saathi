@@ -77,15 +77,19 @@
     <div class="error status-error">{% if run.state == 'failed' and run.error_message %}{{ run.error_message }}{% endif %}</div>
 
     <div class="status-result">
-      {% if run.state == 'saved' and run.folder_path %}
+      {% if run.folder_path and run.progress.available_files %}
         <div class="result-box">
-          <span class="completed-banner">&#9989; Documents ready</span>
+          {% if run.state == 'saved' %}
+            <span class="completed-banner">&#9989; Documents ready</span>
+          {% else %}
+            <span class="completed-banner partial">&#8987; {{ run.progress.documents_ready_count }} of 2 documents ready so far</span>
+          {% endif %}
           <div class="download-links">
-            <a href="/meetings/{{ run.id }}/files/MOM.pdf">MOM (PDF)</a>
-            <a href="/meetings/{{ run.id }}/files/MOM.md">MOM (Markdown)</a>
-            <a href="/meetings/{{ run.id }}/files/Meeting_Analysis.pdf">Meeting Analysis (PDF)</a>
-            <a href="/meetings/{{ run.id }}/files/Meeting_Analysis.md">Meeting Analysis (Markdown)</a>
-            <a href="/meetings/{{ run.id }}/files/transcript.txt">Full transcript</a>
+            {% if 'MOM.pdf' in run.progress.available_files %}<a href="/meetings/{{ run.id }}/files/MOM.pdf">MOM (PDF)</a>{% endif %}
+            {% if 'MOM.md' in run.progress.available_files %}<a href="/meetings/{{ run.id }}/files/MOM.md">MOM (Markdown)</a>{% endif %}
+            {% if 'Meeting_Analysis.pdf' in run.progress.available_files %}<a href="/meetings/{{ run.id }}/files/Meeting_Analysis.pdf">Meeting Analysis (PDF)</a>{% endif %}
+            {% if 'Meeting_Analysis.md' in run.progress.available_files %}<a href="/meetings/{{ run.id }}/files/Meeting_Analysis.md">Meeting Analysis (Markdown)</a>{% endif %}
+            {% if 'transcript.txt' in run.progress.available_files %}<a href="/meetings/{{ run.id }}/files/transcript.txt">Full transcript</a>{% endif %}
           </div>
         </div>
       {% endif %}

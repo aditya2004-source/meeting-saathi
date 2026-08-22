@@ -13,6 +13,18 @@
   const ELAPSED_TICK_MS = 1000;
   const TERMINAL_STATES = new Set(["saved", "failed"]);
 
+  // Matches app/main.py's _DOWNLOADABLE_FILES -- filename -> link label.
+  // Only files present in progress.available_files actually get a link
+  // (documents land one at a time now, not both-or-nothing -- see
+  // app.orchestrator_streaming.finalize_run()).
+  const FILE_LABELS = [
+    ["MOM.pdf", "MOM (PDF)"],
+    ["MOM.md", "MOM (Markdown)"],
+    ["Meeting_Analysis.pdf", "Meeting Analysis (PDF)"],
+    ["Meeting_Analysis.md", "Meeting Analysis (Markdown)"],
+    ["transcript.txt", "Full transcript"],
+  ];
+
   function formatDuration(seconds) {
     const total = Math.max(0, Math.round(seconds));
     const minutes = Math.floor(total / 60);
@@ -31,16 +43,33 @@
 
   function renderResult(resultEl, run, progress) {
     clearChildren(resultEl);
-    if (!progress.completed || !progress.folder_path) return;
+    const availableFiles = progress.available_files || [];
+    if (!progress.folder_path || availableFiles.length === 0) return;
+
     const box = document.createElement("div");
     box.className = "result-box";
+
     const banner = document.createElement("span");
-    banner.className = "completed-banner";
-    banner.textContent = "✅ Documents ready";
-    const code = document.createElement("code");
-    code.textContent = progress.folder_path;
+    if (progress.completed) {
+      banner.className = "completed-banner";
+      banner.textContent = "✅ Documents ready";
+    } else {
+      banner.className = "completed-banner partial";
+      banner.textContent = `⏳ ${progress.documents_ready_count || 0} of 2 documents ready so far`;
+    }
     box.appendChild(banner);
-    box.appendChild(code);
+
+    const links = document.createElement("div");
+    links.className = "download-links";
+    for (const [filename, label] of FILE_LABELS) {
+      if (!availableFiles.includes(filename)) continue;
+      const a = document.createElement("a");
+      a.href = `/meetings/${encodeURIComponent(run.id)}/files/${filename}`;
+      a.textContent = label;
+      links.appendChild(a);
+    }
+    box.appendChild(links);
+
     resultEl.appendChild(box);
   }
 

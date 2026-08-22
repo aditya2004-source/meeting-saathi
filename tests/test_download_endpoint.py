@@ -56,13 +56,33 @@ def test_download_404s_for_unknown_run(monkeypatch):
     assert response.status_code == 404
 
 
-def test_download_404s_before_the_run_is_saved(monkeypatch):
+def test_download_404s_when_no_folder_exists_yet(monkeypatch):
     run_row = {"id": "r1", "state": "generating_docs", "folder_path": None}
     monkeypatch.setattr(db, "get_run", lambda rid: dict(run_row))
 
     response = client.get("/meetings/r1/files/MOM.pdf")
 
     assert response.status_code == 404
+
+
+def test_download_serves_a_file_even_before_the_run_is_saved(tmp_path, monkeypatch):
+    # The whole point of incremental delivery: MOM can be ready and
+    # downloadable while Meeting Analysis is still generating -- the run's
+    # folder_path is set (see app.orchestrator_streaming.finalize_run())
+    # long before state ever reaches "saved".
+    folder = tmp_path / "Weekly Sync - 2026-08-22 1200"
+    folder.mkdir()
+    (folder / "MOM.pdf").write_bytes(b"%PDF-mom-only")
+
+    run_row = {"id": "r1", "state": "generating_docs", "folder_path": str(folder)}
+    monkeypatch.setattr(db, "get_run", lambda rid: dict(run_row))
+
+    mom_response = client.get("/meetings/r1/files/MOM.pdf")
+    analysis_response = client.get("/meetings/r1/files/Meeting_Analysis.pdf")
+
+    assert mom_response.status_code == 200
+    assert mom_response.content == b"%PDF-mom-only"
+    assert analysis_response.status_code == 404  # not written yet -- correctly not ready
 
 
 def test_download_404s_when_the_file_is_missing_on_disk(tmp_path, monkeypatch):
