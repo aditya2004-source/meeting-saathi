@@ -361,15 +361,44 @@ async function _finalizeWithoutOffscreen(id) {
     const result = await chrome.runtime.sendMessage({ target: "offscreen", type: "FINALIZE_EMPTY", runId: id });
     if (!result || !result.ok) {
       console.error("Meeting Saathi: salvage finalize via a fresh offscreen document failed.", result);
+      // Surface the REAL reason instead of collapsing every possible
+      // salvage failure into the same generic "offscreen document
+      // unavailable" string -- that string used to hide whatever actually
+      // went wrong (e.g. the salvage upload's own network error), forcing
+      // a DevTools session to find out. Now the notification itself says why.
+      return { ok: false, reason: (result && (result.error || result.reason)) || "salvage upload failed" };
     }
-    return !!(result && result.ok);
+    return { ok: true };
   } catch (err) {
     console.error("Meeting Saathi: could not recreate an offscreen document to salvage this meeting.", err);
-    return false;
+    return { ok: false, reason: `could not recreate offscreen document: ${String(err.message || err)}` };
   }
 }
 
-async function stopRecording() {
+// Guards stopRecording() against being entered multiple times concurrently.
+// Several independent triggers can all fire within milliseconds of the same
+// real-world event (leaving a meeting): content_script.js's MEETING_LEFT,
+// offscreen.js's TAB_STREAM_ENDED (the tab audio track ending), and
+// chrome.tabs.onUpdated's own URL-based check all call stopRecording()
+// separately. Without this guard each one independently re-messages the
+// offscreen document and independently runs _settleAfterRecordingEnds (duplicate
+// notifications, duplicate /cancel calls, and -- worst case -- one of the
+// redundant STOP_RECORDING sends racing the offscreen document while it's
+// mid-teardown from another one). offscreen.js already collapses concurrent
+// STOP_RECORDING calls onto a single finalizePromise; this is the equivalent
+// guard on this side so only one of these triggers ever actually drives the
+// stop sequence.
+let stopInProgress = null;
+
+function stopRecording() {
+  if (stopInProgress) return stopInProgress;
+  stopInProgress = _doStopRecording().finally(() => {
+    stopInProgress = null;
+  });
+  return stopInProgress;
+}
+
+async function _doStopRecording() {
   const { activeTabId, runId } = await getState();
   if (activeTabId === null) return { ok: false, reason: "not recording" };
   const tabId = activeTabId;
@@ -390,8 +419,9 @@ async function stopRecording() {
     // uncaught rejection here used to skip everything below, including the
     // /cancel call). Try to salvage the meeting from whatever chunks
     // already uploaded before giving up.
-    const salvaged = runId ? await _finalizeWithoutOffscreen(runId) : false;
-    result = salvaged ? { ok: true } : { ok: false, reason: "offscreen document unavailable" };
+    result = runId
+      ? await _finalizeWithoutOffscreen(runId)
+      : { ok: false, reason: "offscreen document unavailable" };
   }
   return _settleAfterRecordingEnds(tabId, runId, result);
 }
