@@ -114,14 +114,37 @@ def index(request: Request, name: str = ""):
     )
 
 
+def _daily_limit_response(user_name: str) -> JSONResponse | None:
+    """Shared by every upload path (/meetings/start, /meetings/upload,
+    /meetings/upload-form) so the daily cap can't be bypassed by using one
+    of the fallback upload routes instead of the extension's normal
+    /meetings/start -- returns a 429 JSONResponse if `user_name` is over
+    settings.daily_meeting_limit, else None. An empty user_name is never
+    rate-limited -- there's nothing to count it against.
+    """
+    if user_name and db.count_runs_today(user_name) >= settings.daily_meeting_limit:
+        return JSONResponse(
+            {
+                "error": "daily_limit_reached",
+                "message": (
+                    f"Aaj ka limit ({settings.daily_meeting_limit} meetings) khatam ho gaya hai. "
+                    "Kal phir try karo."
+                ),
+            },
+            status_code=429,
+        )
+    return None
+
+
 def _start_processing(
     title: str,
     content: bytes,
     filename: str,
     speaker_events: str | None = None,
     attendee_roster: str | None = None,
+    user_name: str = "",
 ) -> dict:
-    run = db.create_run(title=title.strip() or "Untitled Meeting", audio_path="")
+    run = db.create_run(title=title.strip() or "Untitled Meeting", audio_path="", user_name=user_name)
     work_dir = working_dir_for(run["id"])
     suffix = Path(filename or "recording.webm").suffix or ".webm"
     audio_path = work_dir / f"original{suffix}"
@@ -164,6 +187,7 @@ async def upload_meeting(
     audio: UploadFile = File(...),
     speaker_events: str | None = Form(None),
     attendee_roster: str | None = Form(None),
+    user_name: str = Form(""),
 ):
     """Used by both the Chrome extension (automatic) and the manual form on
     the status page (fallback/testing): receives a finished recording and
@@ -172,19 +196,28 @@ async def upload_meeting(
     resolve real speaker names instead of "Speaker N" placeholders.
     `attendee_roster` is optional JSON, the People-panel attendee list, used
     as the authoritative Attendees field instead of inferring it from who
-    spoke.
+    spoke. `user_name` is checked against the same daily limit as
+    /meetings/start -- without this, the fallback upload routes would be an
+    unlimited way around the cap.
     """
+    user_name = user_name.strip()
+    limit_response = _daily_limit_response(user_name)
+    if limit_response is not None:
+        return limit_response
     content = await audio.read()
     run = _start_processing(
-        title, content, audio.filename or "recording.webm", speaker_events, attendee_roster
+        title, content, audio.filename or "recording.webm", speaker_events, attendee_roster, user_name
     )
     return JSONResponse({"id": run["id"], "state": run["state"]})
 
 
 @app.post("/meetings/upload-form")
-async def upload_meeting_form(title: str = Form(...), audio: UploadFile = File(...)):
+async def upload_meeting_form(title: str = Form(...), audio: UploadFile = File(...), user_name: str = Form("")):
+    user_name = user_name.strip()
+    if _daily_limit_response(user_name) is not None:
+        return RedirectResponse(url="/?limit_reached=1", status_code=303)
     content = await audio.read()
-    _start_processing(title, content, audio.filename or "recording.webm")
+    _start_processing(title, content, audio.filename or "recording.webm", user_name=user_name)
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -256,17 +289,9 @@ async def start_meeting(title: str = Form(...), user_name: str = Form("")):
     nothing to count it against.
     """
     user_name = user_name.strip()
-    if user_name and db.count_runs_today(user_name) >= settings.daily_meeting_limit:
-        return JSONResponse(
-            {
-                "error": "daily_limit_reached",
-                "message": (
-                    f"Aaj ka limit ({settings.daily_meeting_limit} meetings) khatam ho gaya hai. "
-                    "Kal phir try karo."
-                ),
-            },
-            status_code=429,
-        )
+    limit_response = _daily_limit_response(user_name)
+    if limit_response is not None:
+        return limit_response
     run = db.create_run(title=title.strip() or "Untitled Meeting", audio_path="", user_name=user_name)
     working_dir_for(run["id"])
     run = db.update_run(run["id"], state="received")

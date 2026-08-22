@@ -18,7 +18,13 @@
 
     <details class="manual-upload">
       <summary>Manually process an existing recording (testing / fallback)</summary>
+      {% if request.query_params.get('limit_reached') %}
+        <p class="muted" style="color:#c53030;">That name's daily limit is already used up for today -- try again tomorrow.</p>
+      {% endif %}
       <form method="post" action="/meetings/upload-form" enctype="multipart/form-data" class="start-form">
+        <label>Your name
+          <input type="text" name="user_name" placeholder="e.g. Priya Shah" required>
+        </label>
         <label>Meeting title
           <input type="text" name="title" placeholder="e.g. Weekly Sales Review" required>
         </label>
