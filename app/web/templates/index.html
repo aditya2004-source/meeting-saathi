@@ -7,24 +7,28 @@
 </head>
 <body>
   <h1>Meeting Saathi</h1>
-  <p class="muted">
-    Meetings recorded by the Chrome extension show up here automatically.
-    You don't need to do anything on this page day-to-day — it's just a
-    status view.
-  </p>
+  {% if viewing_name %}
+    <p class="muted">Showing meetings for <strong>{{ viewing_name }}</strong> only.</p>
+  {% else %}
+    <p class="muted">
+      Meetings recorded by the Chrome extension show up here automatically.
+      You don't need to do anything on this page day-to-day — it's just a
+      status view.
+    </p>
 
-  <details class="manual-upload">
-    <summary>Manually process an existing recording (testing / fallback)</summary>
-    <form method="post" action="/meetings/upload-form" enctype="multipart/form-data" class="start-form">
-      <label>Meeting title
-        <input type="text" name="title" placeholder="e.g. Weekly Sales Review" required>
-      </label>
-      <label>Recording file (audio or video)
-        <input type="file" name="audio" accept="audio/*,video/*" required>
-      </label>
-      <button type="submit">Generate documents</button>
-    </form>
-  </details>
+    <details class="manual-upload">
+      <summary>Manually process an existing recording (testing / fallback)</summary>
+      <form method="post" action="/meetings/upload-form" enctype="multipart/form-data" class="start-form">
+        <label>Meeting title
+          <input type="text" name="title" placeholder="e.g. Weekly Sales Review" required>
+        </label>
+        <label>Recording file (audio or video)
+          <input type="file" name="audio" accept="audio/*,video/*" required>
+        </label>
+        <button type="submit">Generate documents</button>
+      </form>
+    </details>
+  {% endif %}
 
   {% if usage %}
   <h2>Usage by person</h2>

@@ -91,15 +91,27 @@ def _progress_for_run(run: dict) -> dict:
 
 
 @app.get("/")
-def index(request: Request):
-    runs = db.list_runs()
+def index(request: Request, name: str = ""):
+    """`name` (from the extension's "View Dashboard" button, which passes
+    its own stored user_name) scopes this to just that person's meetings --
+    without it, this is the owner's own unfiltered view of everyone. A
+    customer should never see another customer's meetings/usage, so the
+    "Usage by person" table (everyone's activity) is only shown in the
+    unfiltered view, never a scoped one.
+    """
+    name = name.strip()
+    runs = db.list_runs(user_name=name or None)
     for run in runs:
         run["started_display"] = _format_started(run["created_at"])
         run["progress"] = _progress_for_run(run)
-    usage = db.usage_summary()
-    for entry in usage:
-        entry["last_active_display"] = _format_started(entry["last_active"])
-    return templates.TemplateResponse("index.html", {"request": request, "runs": runs, "usage": usage})
+    usage = []
+    if not name:
+        usage = db.usage_summary()
+        for entry in usage:
+            entry["last_active_display"] = _format_started(entry["last_active"])
+    return templates.TemplateResponse(
+        "index.html", {"request": request, "runs": runs, "usage": usage, "viewing_name": name}
+    )
 
 
 def _start_processing(

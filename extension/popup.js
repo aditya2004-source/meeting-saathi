@@ -84,8 +84,13 @@ grantMicBtn.addEventListener("click", () => {
 });
 
 openDashboardBtn.addEventListener("click", async () => {
-  const { serverBaseUrl } = await chrome.storage.local.get("serverBaseUrl");
-  chrome.tabs.create({ url: serverBaseUrl || DEFAULT_SERVER_BASE_URL });
+  const { serverBaseUrl, userName } = await chrome.storage.local.get(["serverBaseUrl", "userName"]);
+  const base = serverBaseUrl || DEFAULT_SERVER_BASE_URL;
+  // Scopes the dashboard to just this person's own meetings (see
+  // app/main.py's index()) -- without this, a customer would see every
+  // other customer's meetings too, not just their own.
+  const url = userName ? `${base}/?name=${encodeURIComponent(userName)}` : base;
+  chrome.tabs.create({ url });
 });
 
 async function hasUserName() {

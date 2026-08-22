@@ -139,11 +139,22 @@ def get_run(run_id: str) -> Optional[dict[str, Any]]:
     return dict(row) if row else None
 
 
-def list_runs(limit: int = 50) -> list[dict[str, Any]]:
+def list_runs(limit: int = 50, user_name: Optional[str] = None) -> list[dict[str, Any]]:
+    """`user_name` scopes the dashboard to one person's own meetings (see
+    /?name=... in app.main.index()) -- without it, this returns every
+    meeting from every person, which is only appropriate for the owner's
+    own unfiltered admin view, not something to hand to a customer.
+    """
     with _connect() as conn:
-        rows = conn.execute(
-            "SELECT * FROM meeting_runs ORDER BY created_at DESC LIMIT ?", (limit,)
-        ).fetchall()
+        if user_name:
+            rows = conn.execute(
+                "SELECT * FROM meeting_runs WHERE user_name = ? ORDER BY created_at DESC LIMIT ?",
+                (user_name, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM meeting_runs ORDER BY created_at DESC LIMIT ?", (limit,)
+            ).fetchall()
     return [dict(row) for row in rows]
 
 

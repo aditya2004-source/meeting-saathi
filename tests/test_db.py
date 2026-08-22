@@ -91,6 +91,29 @@ def test_count_runs_today_still_counts_other_failures(tmp_path, monkeypatch):
     assert db.count_runs_today("Priya Shah") == 1
 
 
+def test_list_runs_without_user_name_returns_everyone(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+
+    db.create_run(title="M1", audio_path="", user_name="Priya Shah")
+    db.create_run(title="M2", audio_path="", user_name="Rahul Verma")
+
+    titles = {run["title"] for run in db.list_runs()}
+    assert titles == {"M1", "M2"}
+
+
+def test_list_runs_with_user_name_scopes_to_that_person_only(tmp_path, monkeypatch):
+    # The dashboard's customer-facing view (see app.main.index()'s `name`
+    # query param) must never leak another person's meetings.
+    _fresh_db(tmp_path, monkeypatch)
+
+    db.create_run(title="Priya's meeting", audio_path="", user_name="Priya Shah")
+    db.create_run(title="Rahul's meeting", audio_path="", user_name="Rahul Verma")
+
+    runs = db.list_runs(user_name="Priya Shah")
+
+    assert [run["title"] for run in runs] == ["Priya's meeting"]
+
+
 def test_usage_summary_aggregates_per_user(tmp_path, monkeypatch):
     _fresh_db(tmp_path, monkeypatch)
 
