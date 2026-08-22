@@ -27,6 +27,24 @@ async function getServerBaseUrl() {
   return serverBaseUrl || DEFAULT_SERVER_BASE_URL;
 }
 
+// Diagnostic breadcrumb channel -- see app/main.py's /debug/log and
+// background.js's own copy of this helper for the full rationale. This is
+// the more important of the two copies: the offscreen document's console is
+// one of the two Chrome surfaces this session's tooling has been unable to
+// reach directly, so without this there is no way to see what's actually
+// happening inside startRecording()/uploadChunk() at all.
+function logDebug(event, detail) {
+  getServerBaseUrl()
+    .then((serverBaseUrl) => {
+      const formData = new FormData();
+      formData.append("source", "offscreen");
+      formData.append("event", event);
+      formData.append("detail", detail === undefined ? "" : String(detail));
+      return fetchWithTimeout(`${serverBaseUrl}/debug/log`, { method: "POST", body: formData }, 5000);
+    })
+    .catch(() => {});
+}
+
 const CHUNK_INTERVAL_MS = 50000; // ~50s per chunk
 
 let mediaRecorder = null;
@@ -59,6 +77,7 @@ async function startRecording(streamId, title, newRunId) {
   sequence = 0;
   stopRequested = false;
   capturedStreams = [];
+  logDebug("startRecording:begin", `runId=${runId} streamId=${streamId ? "yes" : "no"}`);
 
   // The tab's own audio output (what plays through your speakers -- i.e.
   // other participants' voices in the meeting).
@@ -72,6 +91,7 @@ async function startRecording(streamId, title, newRunId) {
     video: false,
   });
   capturedStreams.push(tabStream);
+  logDebug("startRecording:tab getUserMedia resolved", "");
 
   // Your own microphone. Meet does NOT echo your own voice back through the
   // tab's audio output, so without this, your own speech would be missing
@@ -99,8 +119,10 @@ async function startRecording(streamId, title, newRunId) {
       ),
     ]);
     capturedStreams.push(micStream);
+    logDebug("startRecording:mic getUserMedia resolved", "");
   } catch (err) {
     console.warn("Meeting Saathi: microphone unavailable, recording tab audio only.", err);
+    logDebug("startRecording:mic getUserMedia failed/timed out", String((err && err.message) || err));
   }
 
   // Safety net independent of content_script.js's DOM-based call-end
@@ -130,8 +152,11 @@ async function startRecording(streamId, title, newRunId) {
   monitorSource.connect(audioContext.destination);
 
   destinationStream = destination.stream;
+  logDebug("startRecording:audio graph wired", "");
   startRecorderCycle();
+  logDebug("startRecording:startRecorderCycle done", mediaRecorder ? mediaRecorder.state : "null");
   scheduleNextCycle();
+  logDebug("startRecording:scheduleNextCycle done, fully started", "");
 }
 
 function startRecorderCycle() {
@@ -172,6 +197,7 @@ async function handleCycleStop() {
   sequence += 1;
   const isFinal = stopRequested;
   let streamDied = false;
+  logDebug("handleCycleStop:begin", `sequence=${finishedSequence} isFinal=${isFinal} blobSize=${blob.size}`);
 
   if (isFinal) {
     // No more audio needed -- tear down capture now, before the upload
@@ -202,6 +228,7 @@ async function handleCycleStop() {
 
   if (!isFinal && !streamDied) {
     await uploadChunk(finishedSequence, blob, false);
+    logDebug("handleCycleStop:non-final upload done", `sequence=${finishedSequence}`);
     return;
   }
 
@@ -293,11 +320,17 @@ async function uploadChunk(sequenceNumber, blob, isFinal, attempt = 1) {
   // server-side with the freshest version each time.
   formData.append("attendee_roster", JSON.stringify(attendeeRoster));
 
+  logDebug("uploadChunk:begin", `sequence=${sequenceNumber} isFinal=${isFinal} attempt=${attempt} url=${url}`);
   try {
     const response = await fetchWithTimeout(url, { method: "POST", body: formData }, UPLOAD_TIMEOUT_MS);
     const body = await response.json();
+    logDebug("uploadChunk:fetch resolved", `sequence=${sequenceNumber} status=${response.status}`);
     return { ok: response.ok, ...body };
   } catch (err) {
+    logDebug(
+      "uploadChunk:fetch threw/timed out",
+      `sequence=${sequenceNumber} attempt=${attempt} err=${String((err && err.message) || err)}`
+    );
     if (attempt < UPLOAD_MAX_ATTEMPTS) {
       await new Promise((resolve) => setTimeout(resolve, UPLOAD_BACKOFF_MS[attempt - 1]));
       return uploadChunk(sequenceNumber, blob, isFinal, attempt + 1);
@@ -337,10 +370,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target !== "offscreen") return;
 
   if (message.type === "START_RECORDING") {
+    logDebug("onMessage:START_RECORDING received", "");
     startRecording(message.streamId, message.title, message.runId)
       .then(() => sendResponse({ ok: true }))
       .catch((err) => {
         console.error("Meeting Saathi: startRecording failed.", err);
+        logDebug("startRecording:CAUGHT ERROR", String((err && err.message) || err));
         sendResponse({ ok: false, error: String(err.message || err) });
       });
     return true;

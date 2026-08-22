@@ -1,4 +1,5 @@
 import json
+import logging
 import threading
 from pathlib import Path
 
@@ -17,6 +18,20 @@ from app.pipeline.download import working_dir_for
 from app.pipeline.merge import format_meeting_date
 from app.pipeline.timing import load_stage_history, load_timing
 from app.progress import describe_progress
+
+# A standalone handler on this specific logger (not logging.basicConfig())
+# so it's unaffected by -- and doesn't affect -- uvicorn's own logging
+# setup (uvicorn.config.LOGGING_CONFIG only configures its own "uvicorn.*"
+# loggers, but relying on root-logger propagation here would be a subtler
+# dependency on exactly how/when that runs relative to this import).
+# stderr is what systemd/journalctl captures from this service either way.
+logger = logging.getLogger("meeting_saathi")
+logger.setLevel(logging.INFO)
+logger.propagate = False
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(message)s"))
+    logger.addHandler(_handler)
 
 app = FastAPI(title="Meeting Saathi")
 templates = Jinja2Templates(directory="app/web/templates")
@@ -412,6 +427,21 @@ def download_meeting_file(run_id: str, filename: str):
 # one /start to get a run_id before recording begins, repeated /chunk calls
 # as MediaRecorder restart-cycles during the call, and one final /finalize
 # call when the meeting ends. See app/orchestrator_streaming.py.
+
+
+@app.post("/debug/log")
+async def debug_log(source: str = Form(...), event: str = Form(...), detail: str = Form("")):
+    """Fire-and-forget breadcrumb channel for the extension (background.js/
+    offscreen.js), added purely to diagnose a real stuck-recording bug live
+    -- the two Chrome contexts that matter (the offscreen document, the
+    service worker) are exactly the two surfaces neither browser automation
+    nor manual copy-paste have reliably reached this session, but this
+    machine's own journalctl has been the one source of truth for
+    everything confirmed so far. No auth, no persistence beyond the log --
+    intentionally cheap so it's safe to leave calling this indefinitely.
+    """
+    logger.info("EXT-DEBUG source=%s event=%s detail=%s", source, event, detail[:500])
+    return JSONResponse({"ok": True})
 
 
 @app.post("/meetings/start")

@@ -36,6 +36,23 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   }
 }
 
+// Diagnostic breadcrumb channel -- see app/main.py's /debug/log for the
+// full rationale. Fire-and-forget on purpose: never awaited by callers,
+// errors swallowed internally, short timeout of its own -- a debug call
+// must never itself slow down or block the actual recording path it's
+// trying to diagnose.
+function logDebug(event, detail) {
+  getServerBaseUrl()
+    .then((serverBaseUrl) => {
+      const formData = new FormData();
+      formData.append("source", "background");
+      formData.append("event", event);
+      formData.append("detail", detail === undefined ? "" : String(detail));
+      return fetchWithTimeout(`${serverBaseUrl}/debug/log`, { method: "POST", body: formData }, 5000);
+    })
+    .catch(() => {});
+}
+
 async function getUserName() {
   const { userName } = await chrome.storage.local.get("userName");
   return userName || "";
@@ -249,9 +266,13 @@ async function startRecording(tabId, title) {
   // state=received forever with nothing left to ever clean it up.
   let runId = null;
   try {
+    logDebug("startRecording:begin", tabId);
     runId = await startMeetingRun(title);
+    logDebug("startRecording:got runId", runId);
     await ensureOffscreenDocument();
+    logDebug("startRecording:offscreen document ready", "");
     const streamId = await chrome.tabCapture.getMediaStreamId({ targetTabId: tabId });
+    logDebug("startRecording:got streamId", streamId ? "yes" : "no");
     const response = await chrome.runtime.sendMessage({
       target: "offscreen",
       type: "START_RECORDING",
@@ -259,6 +280,7 @@ async function startRecording(tabId, title) {
       title,
       runId,
     });
+    logDebug("startRecording:START_RECORDING response", JSON.stringify(response));
     if (!response || !response.ok) {
       throw new Error((response && response.error) || "offscreen document failed to start");
     }
@@ -278,9 +300,11 @@ async function startRecording(tabId, title) {
     chrome.action.setBadgeText({ text: "REC" });
     chrome.action.setBadgeBackgroundColor({ color: "#c0392b" });
     notifyTab(tabId, { type: "SARATHI_RECORDING_STARTED" });
+    logDebug("startRecording:success", runId);
     return { ok: true };
   } catch (err) {
     console.error("Meeting Saathi: failed to start recording.", err);
+    logDebug("startRecording:CAUGHT ERROR", String((err && err.message) || err));
     // Clear any stale "click to arm" badge/tooltip left over from armTab()
     // -- whatever state prompted the click, it didn't result in a
     // recording, so there's nothing left to invite another click for.
