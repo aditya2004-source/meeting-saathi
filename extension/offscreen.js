@@ -249,6 +249,28 @@ async function fetchRosterSnapshot() {
 
 const UPLOAD_MAX_ATTEMPTS = 3;
 const UPLOAD_BACKOFF_MS = [1000, 3000, 9000];
+// fetch() has no default timeout -- confirmed in production: during a bad
+// spell of the Cloudflare tunnel's own connection (see the tunnel systemd
+// service's own known reconnect-loop issues), a chunk/finalize upload just
+// hung forever instead of erroring, which stalled EVERYTHING downstream of
+// it -- no more chunks ever uploaded (handleCycleStop() never got back to
+// scheduling the next cycle... actually it already had, but every
+// subsequent cycle's own upload hung the same way), and a manual stop
+// looked permanently "stuck" because stopRecording()'s promise chain
+// ultimately bottoms out in this same uploadChunk() call for the final
+// chunk. Bounding it means a bad connection fails fast into the existing
+// retry/backoff logic instead of freezing the whole pipeline silently.
+const UPLOAD_TIMEOUT_MS = 20000;
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
 
 async function uploadChunk(sequenceNumber, blob, isFinal, attempt = 1) {
   const serverBaseUrl = await getServerBaseUrl();
@@ -272,7 +294,7 @@ async function uploadChunk(sequenceNumber, blob, isFinal, attempt = 1) {
   formData.append("attendee_roster", JSON.stringify(attendeeRoster));
 
   try {
-    const response = await fetch(url, { method: "POST", body: formData });
+    const response = await fetchWithTimeout(url, { method: "POST", body: formData }, UPLOAD_TIMEOUT_MS);
     const body = await response.json();
     return { ok: response.ok, ...body };
   } catch (err) {

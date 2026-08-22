@@ -17,6 +17,25 @@ async function getServerBaseUrl() {
   return serverBaseUrl || DEFAULT_SERVER_BASE_URL;
 }
 
+// fetch() has no default timeout -- see offscreen.js's own copy of this
+// helper for the full rationale (confirmed in production: an unbounded
+// fetch during a bad spell of the Cloudflare tunnel connection hung
+// forever instead of erroring, freezing everything downstream of it).
+// Applied here too since startMeetingRun() below sits directly in the
+// critical path of every "click Start Recording" -- a hang there looks
+// identical to the extension simply doing nothing.
+const FETCH_TIMEOUT_MS = 20000;
+
+async function fetchWithTimeout(url, options, timeoutMs) {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
 async function getUserName() {
   const { userName } = await chrome.storage.local.get("userName");
   return userName || "";
@@ -199,7 +218,11 @@ async function startMeetingRun(title) {
   const formData = new FormData();
   formData.append("title", title);
   formData.append("user_name", userName);
-  const response = await fetch(`${serverBaseUrl}/meetings/start`, { method: "POST", body: formData });
+  const response = await fetchWithTimeout(
+    `${serverBaseUrl}/meetings/start`,
+    { method: "POST", body: formData },
+    FETCH_TIMEOUT_MS
+  );
   if (!response.ok) {
     // The daily-limit rejection (see app/main.py's /meetings/start) carries
     // a friendly, already-Hinglish message meant to be shown as-is --
@@ -274,7 +297,11 @@ async function startRecording(tabId, title) {
         .then((serverBaseUrl) => {
           const formData = new FormData();
           formData.append("reason", `Recording never started: ${reason}`);
-          return fetch(`${serverBaseUrl}/meetings/${runId}/cancel`, { method: "POST", body: formData });
+          return fetchWithTimeout(
+            `${serverBaseUrl}/meetings/${runId}/cancel`,
+            { method: "POST", body: formData },
+            FETCH_TIMEOUT_MS
+          );
         })
         .catch(() => {});
     }
@@ -319,7 +346,11 @@ async function _settleAfterRecordingEnds(tabId, runId, result) {
         .then((serverBaseUrl) => {
           const formData = new FormData();
           formData.append("reason", `Recording captured audio but failed to upload/save: ${reason}`);
-          return fetch(`${serverBaseUrl}/meetings/${runId}/cancel`, { method: "POST", body: formData });
+          return fetchWithTimeout(
+            `${serverBaseUrl}/meetings/${runId}/cancel`,
+            { method: "POST", body: formData },
+            FETCH_TIMEOUT_MS
+          );
         })
         .catch(() => {});
     }
