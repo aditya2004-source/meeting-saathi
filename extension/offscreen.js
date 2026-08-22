@@ -40,6 +40,18 @@ let capturedStreams = [];
 let cycleTimer = null;
 let stopRequested = false;
 let stopResolve = null;
+// Set the moment ANY finalization sequence begins (an explicit stop, or
+// the capture stream dying on its own -- see handleCycleStop()) and
+// cleared once it resolves. Exists because two independent "the stream
+// just ended" signals can fire at nearly the same moment for the exact
+// same real-world event (the tab's audio track ending): the track's own
+// "ended" listener below (which asks background.js to call
+// stopRecording()) and MediaRecorder's own onstop handler. Without this,
+// whichever one loses that race finds mediaRecorder already null/
+// "inactive" and reports a spurious "not recording" failure -- confirmed
+// in production -- instead of waiting for the finalization already under
+// way to actually finish and report its real result.
+let finalizePromise = null;
 
 async function startRecording(streamId, title, newRunId) {
   currentTitle = title || "Google Meet";
@@ -169,13 +181,27 @@ async function handleCycleStop() {
     }
   }
 
-  const result = await uploadChunk(finishedSequence, blob, isFinal || streamDied);
-  if (isFinal) {
+  if (!isFinal && !streamDied) {
+    await uploadChunk(finishedSequence, blob, false);
+    return;
+  }
+
+  // Publish the in-flight promise *before* awaiting it -- a concurrently
+  // racing stopRecording() call (background.js's TAB_STREAM_ENDED handler
+  // fires from the exact same underlying "tab audio track ended" event
+  // that can trigger this path, at nearly the same moment) checks this
+  // first and awaits it instead of finding mediaRecorder already null and
+  // reporting a premature "not recording".
+  finalizePromise = uploadChunk(finishedSequence, blob, true);
+  const result = await finalizePromise;
+  finalizePromise = null;
+
+  if (stopResolve) {
     const resolve = stopResolve;
     stopResolve = null;
-    if (resolve) resolve(result);
+    resolve(result);
   } else if (streamDied) {
-    // Nobody's waiting on a stopRecording() promise -- this wasn't a
+    // Nobody was waiting on a stopRecording() promise -- this wasn't a
     // manual/automatic stop request, the capture just died on its own.
     // Tell background.js directly (not via the STOP_RECORDING round-trip --
     // there's nothing left here to stop) so it clears its own state/badge
@@ -251,6 +277,11 @@ async function uploadChunk(sequenceNumber, blob, isFinal, attempt = 1) {
 }
 
 function stopRecording() {
+  // A finalization is already under way (the stream died on its own --
+  // see handleCycleStop()) -- wait for its real result instead of racing
+  // ahead and reporting a spurious "not recording" just because
+  // mediaRecorder already looks inactive to this call.
+  if (finalizePromise) return finalizePromise;
   return new Promise((resolve) => {
     if (!mediaRecorder || mediaRecorder.state === "inactive") {
       resolve({ ok: false, reason: "not recording" });
