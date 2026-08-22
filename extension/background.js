@@ -6,8 +6,11 @@ const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 // Phase 1 (sharing with BA testers): no longer a single hardcoded value --
 // each install can point at a different backend (e.g. a tunnel URL), set
 // once in popup.js's Setup section and stored in chrome.storage.local.
-// Falls back to localhost for the original single-machine setup.
-const DEFAULT_SERVER_BASE_URL = "http://localhost:8420";
+// Defaults to the current Cloudflare Tunnel URL (not localhost) so a
+// customer's install works out of the box without them ever having to type
+// a server address -- only update this if the tunnel restarts and gets a
+// new URL (see ~/.config/systemd/user/meeting-saathi-tunnel.service).
+const DEFAULT_SERVER_BASE_URL = "https://significance-gpl-evaluating-element.trycloudflare.com";
 
 async function getServerBaseUrl() {
   const { serverBaseUrl } = await chrome.storage.local.get("serverBaseUrl");

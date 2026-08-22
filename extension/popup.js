@@ -11,7 +11,10 @@ const serverUrlEl = document.getElementById("serverUrl");
 const saveSetupBtn = document.getElementById("saveSetup");
 const setupStatusEl = document.getElementById("setupStatus");
 
-const DEFAULT_SERVER_BASE_URL = "http://localhost:8420";
+// Same default as background.js/offscreen.js -- the current Cloudflare
+// Tunnel URL, so a customer install works without ever typing a server
+// address. Update all three if the tunnel URL ever changes.
+const DEFAULT_SERVER_BASE_URL = "https://significance-gpl-evaluating-element.trycloudflare.com";
 
 // Phase 1 (sharing with BA testers): a plain self-reported name, no
 // login/password -- sent with every /meetings/start call so the backend can
