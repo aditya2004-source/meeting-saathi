@@ -147,40 +147,83 @@ function hasLeftMeetingScreen() {
   // (this is the actual bug that left recordings stuck in "REC" forever
   // after leaving). Checked first, as a hard override: if this screen is
   // showing, we are definitely not in the call, regardless of what any
-  // other signal thinks.
+  // other signal thinks. Uses innerText (not textContent), which only
+  // ever reflects rendered/visible text -- naturally immune to the same
+  // hidden-stale-element problem isVisible() below exists to guard the
+  // other three signals against.
   const text = document.body.innerText || "";
   return /you('| ha)?ve? left the meeting|you left the call|return to home screen/i.test(text);
 }
 
+// Signals 1-3 in isInCall() below only ever checked whether a matching
+// element exists in the DOM at all -- never whether it's actually
+// rendered/visible right now. Google Meet is a heavy SPA; hiding a call's
+// leave-button/timer/mic-control (display:none or similar) rather than
+// removing it from the DOM after you leave is a completely ordinary SPA
+// pattern -- confirmed as the likely cause of a real production bug
+// (recording never auto-stopping, requiring a manual click every time):
+// a stale, invisible element kept matching forever, so isInCall() could
+// never flip back to false once it had returned true. offsetParent is
+// null for any element that's display:none (on itself or an ancestor) or
+// detached from the document -- a cheap, standard "is this actually
+// rendered right now" check.
+function isVisible(el) {
+  return !!el && el.offsetParent !== null;
+}
+
+let _lastIsInCallResult = null;
+
 function isInCall() {
-  if (hasLeftMeetingScreen()) return false;
+  if (hasLeftMeetingScreen()) {
+    _logIsInCallVerdict(false, { hasLeftMeetingScreen: true });
+    return false;
+  }
 
-  // Signal 1: a control whose label mentions "leave" (case-insensitive,
-  // partial match -- covers "Leave call", "Leave the call", wording changes).
-  if (document.querySelector('[aria-label*="leave" i]')) return true;
+  // Signal 1: a VISIBLE control whose label mentions "leave"
+  // (case-insensitive, partial match -- covers "Leave call", "Leave the
+  // call", wording changes).
+  const signal1 = Array.from(document.querySelectorAll('[aria-label*="leave" i]')).some(isVisible);
 
-  // Signal 2: a control whose label mentions "more options"/"call controls"
-  // combined with a live call-duration timer element (format like "12:34" or
-  // "1:02:03" that Meet shows once you're actually in a call).
+  // Signal 2: a VISIBLE element showing a live call-duration timer (format
+  // like "12:34" or "1:02:03" that Meet shows once you're actually in a
+  // call).
+  let signal2 = false;
   const timerCandidates = document.querySelectorAll('[jsname], span, div');
   for (const el of timerCandidates) {
     const text = el.textContent?.trim();
-    if (text && /^\d{1,2}:\d{2}(:\d{2})?$/.test(text) && el.children.length === 0) {
-      return true;
+    if (text && /^\d{1,2}:\d{2}(:\d{2})?$/.test(text) && el.children.length === 0 && isVisible(el)) {
+      signal2 = true;
+      break;
     }
   }
 
   // Signal 3: URL is a real meeting code (meet.google.com/xxx-xxxx-xxx) AND
-  // the pre-join "Ready to join" / "Join now" screen is no longer present.
+  // the pre-join "Ready to join" / "Join now" screen is no longer present
+  // AND a VISIBLE mic/camera control exists.
   const isMeetingUrl = /^\/[a-z]{3}-[a-z]{4}-[a-z]{3}/i.test(location.pathname);
   const onPreJoinScreen = !!Array.from(document.querySelectorAll("button, span")).find((el) =>
     /join now|ask to join|ready to join/i.test(el.textContent || "")
   );
-  if (isMeetingUrl && !onPreJoinScreen && document.querySelector('[aria-label*="microphone" i], [aria-label*="camera" i]')) {
-    return true;
-  }
+  const hasVisibleMicOrCameraControl = Array.from(
+    document.querySelectorAll('[aria-label*="microphone" i], [aria-label*="camera" i]')
+  ).some(isVisible);
+  const signal3 = isMeetingUrl && !onPreJoinScreen && hasVisibleMicOrCameraControl;
 
-  return false;
+  const result = signal1 || signal2 || signal3;
+  _logIsInCallVerdict(result, { signal1, signal2, signal3, isMeetingUrl, onPreJoinScreen });
+  return result;
+}
+
+// Logs only on a verdict change (plus once on the very first call, so a
+// fresh page load's initial state is visible too) -- poll() runs every 2s
+// forever, so logging unconditionally would spam the console into being
+// useless. Lets a DevTools console check on the Meet tab show exactly
+// which signal is (still) misfiring if this ever needs debugging again,
+// instead of guessing blind against a DOM nobody here can see live.
+function _logIsInCallVerdict(result, details) {
+  if (result === _lastIsInCallResult) return;
+  _lastIsInCallResult = result;
+  console.debug("[Meeting Saathi] isInCall ->", result, details);
 }
 
 function findActiveSpeakerName() {
