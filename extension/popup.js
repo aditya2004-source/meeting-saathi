@@ -7,13 +7,15 @@ const grantMicBtn = document.getElementById("grantMic");
 const openDashboardBtn = document.getElementById("openDashboard");
 const setupSectionEl = document.getElementById("setupSection");
 const userNameEl = document.getElementById("userName");
-const serverUrlEl = document.getElementById("serverUrl");
 const saveSetupBtn = document.getElementById("saveSetup");
 const setupStatusEl = document.getElementById("setupStatus");
 
 // Same default as background.js/offscreen.js -- the current Cloudflare
 // Tunnel URL, so a customer install works without ever typing a server
-// address. Update all three if the tunnel URL ever changes.
+// address. There's deliberately no UI for this any more (see below) --
+// update all three files' DEFAULT_SERVER_BASE_URL and repackage if the
+// tunnel URL ever changes, rather than asking a non-technical customer to
+// know what to paste into a "server" field.
 const DEFAULT_SERVER_BASE_URL = "https://significance-gpl-evaluating-element.trycloudflare.com";
 
 // Phase 1 (sharing with BA testers): a plain self-reported name, no
@@ -21,10 +23,8 @@ const DEFAULT_SERVER_BASE_URL = "https://significance-gpl-evaluating-element.try
 // enforce a per-person daily meeting limit and show a "who's using this"
 // table on the dashboard (see app/db.py's count_runs_today()/usage_summary()).
 async function loadSetup() {
-  const { userName, serverBaseUrl } = await chrome.storage.local.get(["userName", "serverBaseUrl"]);
+  const { userName } = await chrome.storage.local.get("userName");
   userNameEl.value = userName || "";
-  serverUrlEl.value = serverBaseUrl || "";
-  serverUrlEl.placeholder = `Server URL (default: ${DEFAULT_SERVER_BASE_URL})`;
   // First-time users (no name saved yet) get the section expanded so they
   // notice it, instead of it staying collapsed and silently blocking
   // recording later with no clue why.
@@ -33,8 +33,7 @@ async function loadSetup() {
 
 saveSetupBtn.addEventListener("click", async () => {
   const userName = userNameEl.value.trim();
-  const serverBaseUrl = serverUrlEl.value.trim();
-  await chrome.storage.local.set({ userName, serverBaseUrl });
+  await chrome.storage.local.set({ userName });
   setupStatusEl.textContent = "Saved.";
   setupStatusEl.style.color = "#1a7a3c";
   if (userName) setupSectionEl.open = false;
