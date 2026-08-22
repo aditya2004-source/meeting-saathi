@@ -53,7 +53,7 @@ diarization-fallback case (sparse DOM speaker coverage) to AssemblyAI
 ## Setup
 
 ```bash
-cd /home/enjay/projects/sarathi-meeting-bot
+cd /home/enjay/projects/meeting-saathi
 pip3 install --user -r requirements.txt
 # If you'd rather use an isolated virtualenv instead of --user installs:
 #   sudo apt install python3.10-venv && python3 -m venv .venv && source .venv/bin/activate
@@ -75,14 +75,14 @@ it running automatically:
 
 ```bash
 mkdir -p ~/.config/systemd/user
-ln -sf "$(pwd)/scripts/systemd/sarathi-meeting-bot.service" ~/.config/systemd/user/sarathi-meeting-bot.service
+ln -sf "$(pwd)/scripts/systemd/meeting-saathi.service" ~/.config/systemd/user/meeting-saathi.service
 systemctl --user daemon-reload
-systemctl --user enable --now sarathi-meeting-bot.service
+systemctl --user enable --now meeting-saathi.service
 ```
 
 It starts on every login and restarts itself if it ever crashes. Check on it
-with `systemctl --user status sarathi-meeting-bot.service` or
-`journalctl --user -u sarathi-meeting-bot -f`.
+with `systemctl --user status meeting-saathi.service` or
+`journalctl --user -u meeting-saathi -f`.
 
 For local development (or if you'd rather run it in the foreground), the
 manual command still works:

@@ -64,7 +64,7 @@ regenerate just the documents (using the transcript that's already saved,
 without re-transcribing or re-diarizing):
 
 ```bash
-cd /home/enjay/projects/sarathi-meeting-bot
+cd /home/enjay/projects/meeting-saathi
 python scripts/regenerate_docs.py "/home/enjay/Downloads/Meeting Saathi/<folder name>/transcript.json"
 ```
 
@@ -77,6 +77,6 @@ If you changed `.env` (e.g. added a key), the server needs a restart to pick
 it up. Ask your assistant to restart it, or manually:
 ```bash
 pkill -f "uvicorn app.main:app"
-cd /home/enjay/projects/sarathi-meeting-bot
+cd /home/enjay/projects/meeting-saathi
 uvicorn app.main:app --host 127.0.0.1 --port 8420
 ```

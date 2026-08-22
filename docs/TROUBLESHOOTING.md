@@ -4,7 +4,7 @@
 
 The server isn't running. Ask your assistant to start it, or run:
 ```bash
-cd /home/enjay/projects/sarathi-meeting-bot
+cd /home/enjay/projects/meeting-saathi
 uvicorn app.main:app --host 127.0.0.1 --port 8420
 ```
 
@@ -181,7 +181,7 @@ that assume a `.venv` unless you specifically set one up yourself.
 
 Run the test suite to check the core code itself is healthy:
 ```bash
-cd /home/enjay/projects/sarathi-meeting-bot
+cd /home/enjay/projects/meeting-saathi
 pytest
 ```
 If tests pass but you're still stuck, describe exactly what you did and

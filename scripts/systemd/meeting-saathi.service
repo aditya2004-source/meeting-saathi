@@ -3,7 +3,7 @@ Description=Meeting Saathi server
 After=network.target
 
 [Service]
-WorkingDirectory=/home/enjay/projects/sarathi-meeting-bot
+WorkingDirectory=/home/enjay/projects/meeting-saathi
 ExecStart=/usr/bin/python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8420
 Restart=on-failure
 RestartSec=3

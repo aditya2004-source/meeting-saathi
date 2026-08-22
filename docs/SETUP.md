@@ -7,7 +7,7 @@ detail on a specific step, or you're setting this up on a new machine.
 ## 1. Install the server-side dependencies
 
 ```bash
-cd /home/enjay/projects/sarathi-meeting-bot
+cd /home/enjay/projects/meeting-saathi
 pip3 install --user -r requirements.txt
 playwright install chromium
 ```
@@ -75,7 +75,7 @@ else, so this local model is what identifies "who said what." It's free:
 ## 4. Run the server
 
 ```bash
-cd /home/enjay/projects/sarathi-meeting-bot
+cd /home/enjay/projects/meeting-saathi
 uvicorn app.main:app --host 127.0.0.1 --port 8420
 ```
 

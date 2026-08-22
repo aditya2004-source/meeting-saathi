@@ -31,7 +31,7 @@ own, this uses a **Chrome extension**. That means:
 
 ## What is already done (you don't need to do this)
 
-- The whole program is written and tested (`/home/enjay/projects/sarathi-meeting-bot`).
+- The whole program is written and tested (`/home/enjay/projects/meeting-saathi`).
 - The local server runs at **http://localhost:8420**.
 
 ## What YOU still need to do — 3 steps

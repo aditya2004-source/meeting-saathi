@@ -12,7 +12,7 @@ this is completely normal for Chrome and only takes a minute.
 3. Three new buttons appear. Click **Load unpacked**.
 4. In the file picker, navigate to and select this exact folder:
    ```
-   /home/enjay/projects/sarathi-meeting-bot/extension
+   /home/enjay/projects/meeting-saathi/extension
    ```
    (select the folder itself, not a file inside it)
 5. "Meeting Saathi" now appears in your extensions list, and its icon
