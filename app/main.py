@@ -4,7 +4,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -91,15 +91,24 @@ def _progress_for_run(run: dict) -> dict:
 
 
 @app.get("/")
-def index(request: Request, name: str = ""):
+def index(request: Request, name: str = "", admin_token: str = ""):
     """`name` (from the extension's "View Dashboard" button, which passes
-    its own stored user_name) scopes this to just that person's meetings --
-    without it, this is the owner's own unfiltered view of everyone. A
-    customer should never see another customer's meetings/usage, so the
-    "Usage by person" table (everyone's activity) is only shown in the
-    unfiltered view, never a scoped one.
+    its own stored user_name) scopes this to just that person's meetings.
+    Without a `name`, this is the owner's own unfiltered view of everyone
+    -- gated by `admin_token` matching settings.admin_token, since without
+    that check anyone could just strip ?name= off the dashboard URL their
+    own extension gave them and see every other customer's meetings plus
+    the "Usage by person" table. The owner's admin URL is `<server>/?
+    admin_token=<the configured value>`.
     """
     name = name.strip()
+    if not name:
+        if not settings.admin_token or admin_token != settings.admin_token:
+            return HTMLResponse(
+                "<p style='font-family: sans-serif; padding: 2rem;'>Not authorized. "
+                "Pass your name (?name=...) or the correct admin link.</p>",
+                status_code=403,
+            )
     runs = db.list_runs(user_name=name or None)
     for run in runs:
         run["started_display"] = _format_started(run["created_at"])

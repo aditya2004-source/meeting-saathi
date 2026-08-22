@@ -91,6 +91,14 @@ class Settings(BaseSettings):
     # capped at this many meeting-starts per day to keep any one person from
     # burning the whole team's shared Gemini quota. See app.db.count_runs_today().
     daily_meeting_limit: int = 3
+    # Gate for the dashboard's unfiltered "everyone" view (GET / with no
+    # ?name=) -- without this, a customer could just strip ?name= off the
+    # dashboard URL their own extension gave them and see every other
+    # customer's meetings plus the "Usage by person" table. Set via
+    # ADMIN_TOKEN in .env; the owner's admin URL is `<server>/?admin_token=
+    # <this value>`. Empty means the admin view is blocked entirely (safer
+    # default than silently leaving it open to everyone).
+    admin_token: str = ""
 
     # Internal paths -- project_root itself is not env-configurable (it's
     # derived from this file's own location), but db_path/working_dir are,
