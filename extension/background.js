@@ -12,9 +12,19 @@ const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 // new URL (see ~/.config/systemd/user/meeting-saathi-tunnel.service).
 const DEFAULT_SERVER_BASE_URL = "https://activists-inkjet-walter-louis.trycloudflare.com";
 
+// Defensive -- see offscreen.js's own copy of this helper for the full
+// rationale (confirmed there tonight as the actual root cause of the
+// upload pipeline going silently, permanently dark). Applied here too for
+// the same reason: this must never be a single point of failure for
+// startMeetingRun()/the cancel calls/logDebug.
 async function getServerBaseUrl() {
-  const { serverBaseUrl } = await chrome.storage.local.get("serverBaseUrl");
-  return serverBaseUrl || DEFAULT_SERVER_BASE_URL;
+  try {
+    const { serverBaseUrl } = await chrome.storage.local.get("serverBaseUrl");
+    return serverBaseUrl || DEFAULT_SERVER_BASE_URL;
+  } catch (err) {
+    console.error("Meeting Saathi: chrome.storage.local.get() failed, falling back to default server URL.", err);
+    return DEFAULT_SERVER_BASE_URL;
+  }
 }
 
 // fetch() has no default timeout -- see offscreen.js's own copy of this

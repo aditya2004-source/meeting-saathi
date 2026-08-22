@@ -22,9 +22,27 @@
 // them ever typing a server address; update if the tunnel URL changes.
 const DEFAULT_SERVER_BASE_URL = "https://activists-inkjet-walter-louis.trycloudflare.com";
 
+// Defensive: this is the very first `await` in both uploadChunk() and
+// logDebug(), and neither of those callers originally wrapped it in a
+// try/catch of their own -- confirmed as the actual root cause tonight
+// (live-tested: zero chunk uploads and zero diagnostic breadcrumbs ever
+// reached the server from THIS file specifically, while background.js's
+// identical-shaped calls worked every time) and matches this session's very
+// first bug report, an uncaught error whose stack trace pointed at exactly
+// this line. Whatever the underlying cause of chrome.storage.local.get()
+// failing inside an offscreen document turns out to be, this function
+// should simply never be a single point of failure for the entire upload
+// pipeline -- falling back to the default URL is always a safe, correct
+// answer here, same as the `serverBaseUrl || DEFAULT_SERVER_BASE_URL` logic
+// already does for the common case (key never set).
 async function getServerBaseUrl() {
-  const { serverBaseUrl } = await chrome.storage.local.get("serverBaseUrl");
-  return serverBaseUrl || DEFAULT_SERVER_BASE_URL;
+  try {
+    const { serverBaseUrl } = await chrome.storage.local.get("serverBaseUrl");
+    return serverBaseUrl || DEFAULT_SERVER_BASE_URL;
+  } catch (err) {
+    console.error("Meeting Saathi: chrome.storage.local.get() failed, falling back to default server URL.", err);
+    return DEFAULT_SERVER_BASE_URL;
+  }
 }
 
 // Diagnostic breadcrumb channel -- see app/main.py's /debug/log and
