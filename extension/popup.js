@@ -112,30 +112,20 @@ function refreshStatus() {
       statusEl.style.color = "#1a7a3c";
       toggleBtn.textContent = "Stop Recording";
     } else if (res && res.armable) {
-      // Opening this popup IS the one click Chrome requires (tabCapture
-      // only allows starting in response to a genuine gesture on the
-      // extension itself) -- arm immediately, no second click needed.
-      // Skipped entirely if no name is set yet -- starting a recording with
-      // no identity would bypass the daily-limit tracking on the backend.
-      if (!(await hasUserName())) {
-        blockForMissingName();
-        return;
-      }
-      statusEl.textContent = "Starting recording…";
-      statusEl.style.color = "#1a7a3c";
+      // A Meet call was joined and is waiting to be recorded -- shows the
+      // ready state and lets the user actually read/edit the title, but
+      // does NOT start on its own just because the popup opened. The
+      // user's explicit click on the "Start Recording" button below (not
+      // opening the popup) is what satisfies Chrome's tabCapture gesture
+      // requirement now -- a real click on the extension's own UI still
+      // counts, same as before, just requiring one deliberate click
+      // instead of firing the instant the popup appears.
+      statusEl.textContent = "Ready — click Start Recording";
+      statusEl.style.color = "#2b6cb0";
       toggleBtn.textContent = "Start Recording";
       if (titleEl.value.trim() === "" && res.pendingTitle) {
         titleEl.value = res.pendingTitle;
       }
-      chrome.runtime.sendMessage({ type: "ARM_RECORDING" }, (result) => {
-        if (result && result.ok === false) {
-          statusEl.textContent = `Could not start: ${result.error || result.reason || "unknown error"}`;
-          statusEl.style.color = "#c0392b";
-          toggleBtn.textContent = "Start Recording";
-        } else {
-          refreshStatus();
-        }
-      });
     } else {
       statusEl.textContent = "Not recording";
       statusEl.style.color = "#555";
@@ -151,6 +141,27 @@ toggleBtn.addEventListener("click", async () => {
         if (result && result.ok === false) {
           statusEl.textContent = `Upload failed: ${result.error || result.reason || "unknown error"}`;
           statusEl.style.color = "#c0392b";
+        } else {
+          refreshStatus();
+        }
+      });
+    } else if (res && res.armable) {
+      // Explicit click on "Start Recording" while a Meet call is waiting
+      // to be armed -- uses ARM_RECORDING (the pendingTabId/pendingTitle
+      // captured back when MEETING_JOINED fired), not MANUAL_START, so
+      // this always records the actual Meet tab even if the user's
+      // currently-focused tab has since changed.
+      if (!(await hasUserName())) {
+        blockForMissingName();
+        return;
+      }
+      statusEl.textContent = "Starting recording…";
+      statusEl.style.color = "#1a7a3c";
+      chrome.runtime.sendMessage({ type: "ARM_RECORDING" }, (result) => {
+        if (result && result.ok === false) {
+          statusEl.textContent = `Could not start: ${result.error || result.reason || "unknown error"}`;
+          statusEl.style.color = "#c0392b";
+          toggleBtn.textContent = "Start Recording";
         } else {
           refreshStatus();
         }
