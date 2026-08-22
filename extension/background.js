@@ -342,38 +342,43 @@ async function _settleAfterRecordingEnds(tabId, runId, result) {
 // progress chunk's audio is actually lost with the document. Without
 // this, the whole meeting used to be thrown away (marked failed via
 // /cancel) despite most of it already sitting safely on the server,
-// because nothing ever told the backend the meeting was over. Sends an
-// empty placeholder as the final chunk purely to trigger the server's
-// finalize path -- app/orchestrator_streaming.py's per-chunk processing
-// tolerates one bad/empty chunk without failing the whole run (see
+// because nothing ever told the backend the meeting was over.
+//
+// Delegates the actual upload to a freshly (re)created offscreen document
+// rather than fetch()-ing directly from this service worker -- confirmed
+// in production that a direct service-worker fetch to this exact same
+// endpoint kept failing with no useful error, even though curl-ing the
+// identical request works fine, most likely because the service worker
+// doesn't reliably stay alive for the whole request. Sends an empty
+// placeholder as the final chunk purely to trigger the server's finalize
+// path -- app/orchestrator_streaming.py's per-chunk processing tolerates
+// one bad/empty chunk without failing the whole run (see
 // _process_chunk_then_maybe_finalize()'s try/except there), so this just
 // means the last few seconds might be missing, not the whole meeting.
-async function _finalizeWithoutOffscreen(id, speakerEvents, attendeeRoster) {
+async function _finalizeWithoutOffscreen(id) {
   try {
-    const serverBaseUrl = await getServerBaseUrl();
-    const formData = new FormData();
-    formData.append("sequence", "999999");
-    formData.append("audio", new Blob([], { type: "audio/webm" }), "empty-final.webm");
-    formData.append("speaker_events", JSON.stringify(speakerEvents || []));
-    formData.append("attendee_roster", JSON.stringify(attendeeRoster || []));
-    const response = await fetch(`${serverBaseUrl}/meetings/${id}/finalize`, { method: "POST", body: formData });
-    return response.ok;
-  } catch {
+    await ensureOffscreenDocument();
+    const result = await chrome.runtime.sendMessage({ target: "offscreen", type: "FINALIZE_EMPTY", runId: id });
+    if (!result || !result.ok) {
+      console.error("Meeting Saathi: salvage finalize via a fresh offscreen document failed.", result);
+    }
+    return !!(result && result.ok);
+  } catch (err) {
+    console.error("Meeting Saathi: could not recreate an offscreen document to salvage this meeting.", err);
     return false;
   }
 }
 
 async function stopRecording() {
-  const { activeTabId, runId, speakerEvents, attendeeRoster } = await getState();
+  const { activeTabId, runId } = await getState();
   if (activeTabId === null) return { ok: false, reason: "not recording" };
   const tabId = activeTabId;
-  // No speakerEvents/attendeeRoster passed to offscreen.js's own upload
-  // path -- it already has runId from START_RECORDING, and pulls a fresh
-  // snapshot of each via GET_SPEAKER_EVENTS_SNAPSHOT/GET_ROSTER_SNAPSHOT
-  // right before every chunk/finalize upload, so it's always current as
-  // of the actual upload moment rather than a possibly-stale value passed
-  // here. (The fallback path below is the one exception -- it has no
-  // offscreen document left to ask, so it uses this same state's own copy.)
+  // No speakerEvents/attendeeRoster passed here -- offscreen.js already has
+  // runId from START_RECORDING, and pulls a fresh snapshot of each via
+  // GET_SPEAKER_EVENTS_SNAPSHOT/GET_ROSTER_SNAPSHOT right before every
+  // chunk/finalize upload (including this terminal one and the salvage
+  // path's own placeholder upload), so it's always current as of the
+  // actual upload moment rather than a possibly-stale value passed here.
   let result;
   try {
     result = await chrome.runtime.sendMessage({ target: "offscreen", type: "STOP_RECORDING" });
@@ -385,7 +390,7 @@ async function stopRecording() {
     // uncaught rejection here used to skip everything below, including the
     // /cancel call). Try to salvage the meeting from whatever chunks
     // already uploaded before giving up.
-    const salvaged = runId ? await _finalizeWithoutOffscreen(runId, speakerEvents, attendeeRoster) : false;
+    const salvaged = runId ? await _finalizeWithoutOffscreen(runId) : false;
     result = salvaged ? { ok: true } : { ok: false, reason: "offscreen document unavailable" };
   }
   return _settleAfterRecordingEnds(tabId, runId, result);

@@ -308,4 +308,22 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     stopRecording().then((result) => sendResponse(result));
     return true;
   }
+  if (message.type === "FINALIZE_EMPTY") {
+    // Used when the ORIGINAL offscreen document (the one that actually
+    // had mediaRecorder / the real in-progress audio) vanished entirely.
+    // background.js recreates a brand new offscreen document (this one)
+    // and asks it to send a placeholder final chunk instead of trying to
+    // fetch() directly from the service worker -- confirmed in
+    // production that the service-worker-direct attempt kept failing even
+    // though the exact same request works fine via curl, most likely
+    // because the service worker doesn't reliably stay alive for the
+    // whole fetch. This document never actually recorded anything (its
+    // own mediaRecorder is null), so `runId` has to be set explicitly
+    // instead of coming from a real startRecording() call.
+    runId = message.runId;
+    uploadChunk(999999, new Blob([], { type: "audio/webm" }), true)
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
+    return true;
+  }
 });
