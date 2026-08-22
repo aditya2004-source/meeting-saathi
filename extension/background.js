@@ -10,7 +10,7 @@ const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 // customer's install works out of the box without them ever having to type
 // a server address -- only update this if the tunnel restarts and gets a
 // new URL (see ~/.config/systemd/user/meeting-saathi-tunnel.service).
-const DEFAULT_SERVER_BASE_URL = "https://activists-inkjet-walter-louis.trycloudflare.com";
+const DEFAULT_SERVER_BASE_URL = "http://localhost:8420"; // TEMP: local-only testing tonight, revert to tunnel URL before sharing the extension again
 
 // Defensive -- see offscreen.js's own copy of this helper for the full
 // rationale (confirmed there tonight as the actual root cause of the
