@@ -20,7 +20,7 @@
 // can't share code) -- set once in popup.js's Setup section. Defaults to
 // the current Cloudflare Tunnel URL so a customer install works without
 // them ever typing a server address; update if the tunnel URL changes.
-const DEFAULT_SERVER_BASE_URL = "https://significance-gpl-evaluating-element.trycloudflare.com";
+const DEFAULT_SERVER_BASE_URL = "https://activists-inkjet-walter-louis.trycloudflare.com";
 
 async function getServerBaseUrl() {
   const { serverBaseUrl } = await chrome.storage.local.get("serverBaseUrl");
