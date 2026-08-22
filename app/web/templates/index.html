@@ -7,6 +7,9 @@
 </head>
 <body>
   <h1>Meeting Saathi</h1>
+  {% if logout_url %}
+    <p class="muted"><a href="{{ logout_url }}">Logout</a></p>
+  {% endif %}
   {% if viewing_name %}
     <p class="muted">Showing meetings for <strong>{{ viewing_name }}</strong> only.</p>
   {% else %}

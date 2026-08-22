@@ -91,14 +91,32 @@ class Settings(BaseSettings):
     # capped at this many meeting-starts per day to keep any one person from
     # burning the whole team's shared Gemini quota. See app.db.count_runs_today().
     daily_meeting_limit: int = 3
-    # Gate for the dashboard's unfiltered "everyone" view (GET / with no
-    # ?name=) -- without this, a customer could just strip ?name= off the
-    # dashboard URL their own extension gave them and see every other
-    # customer's meetings plus the "Usage by person" table. Set via
-    # ADMIN_TOKEN in .env; the owner's admin URL is `<server>/?admin_token=
-    # <this value>`. Empty means the admin view is blocked entirely (safer
-    # default than silently leaving it open to everyone).
-    admin_token: str = ""
+    # Admin dashboard: unguessable-URL + real login, replacing the old
+    # shared-secret-in-a-query-string (?admin_token=...) scheme, which sat
+    # in a query string on the same base URL (/) customers already know and
+    # use every day. `admin_url_slug` is the only way to even reach the
+    # login page at all -- `<server>/{admin_url_slug}/login` -- any other
+    # slug 404s exactly like a route that doesn't exist, rather than
+    # revealing "wrong password" (which would confirm admin functionality
+    # lives there). `admin_username`/`admin_password` are then checked by
+    # the login form itself. All set via ADMIN_URL_SLUG/ADMIN_USERNAME/
+    # ADMIN_PASSWORD in .env.
+    admin_url_slug: str = ""
+    admin_username: str = ""
+    admin_password: str = ""
+    # Signs the session cookie set on successful login (Starlette's
+    # SessionMiddleware -- see app/main.py) -- no server-side session store
+    # needed for a single-owner admin panel. Set via SESSION_SECRET_KEY in
+    # .env; changing it invalidates every existing session (forces re-login).
+    session_secret_key: str = ""
+    # Whether the session cookie gets the browser-enforced Secure attribute
+    # (only sent back over HTTPS). True is correct for how this actually
+    # runs: local systemd on 127.0.0.1:8420 behind a Cloudflare Tunnel that
+    # terminates HTTPS at the edge -- real users only ever see the https://
+    # tunnel URL, and both real browsers and curl treat 127.0.0.1/localhost
+    # as a secure context too, so this doesn't break local
+    # `curl http://127.0.0.1:8420/...` verification either.
+    session_cookie_https_only: bool = True
 
     # Internal paths -- project_root itself is not env-configurable (it's
     # derived from this file's own location), but db_path/working_dir are,

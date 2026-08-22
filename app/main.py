@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 from app import db
 from app import orchestrator_streaming
@@ -28,6 +29,18 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["POST", "GET"],
     allow_headers=["*"],
+)
+
+# Backs the admin login session (see /{slug}/login etc. below) -- a signed,
+# httponly cookie is enough for a single-owner admin panel, no server-side
+# session store needed. 7 days so the owner doesn't have to re-login daily;
+# session_cookie_https_only is True by default to match how this actually
+# runs (see app/config.py's comment on that setting).
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=settings.session_secret_key,
+    max_age=7 * 24 * 60 * 60,
+    https_only=settings.session_cookie_https_only,
 )
 
 
@@ -116,35 +129,108 @@ def _progress_for_run(run: dict) -> dict:
 
 
 @app.get("/")
-def index(request: Request, name: str = "", admin_token: str = ""):
+def index(request: Request, name: str = ""):
     """`name` (from the extension's "View Dashboard" button, which passes
     its own stored user_name) scopes this to just that person's meetings.
-    Without a `name`, this is the owner's own unfiltered view of everyone
-    -- gated by `admin_token` matching settings.admin_token, since without
-    that check anyone could just strip ?name= off the dashboard URL their
-    own extension gave them and see every other customer's meetings plus
-    the "Usage by person" table. The owner's admin URL is `<server>/?
-    admin_token=<the configured value>`.
+    Without a `name`, there's nothing to scope by -- this is purely the
+    customer-facing view now; the old unfiltered "everyone" view (gated by
+    a static admin_token in this same query string) has moved to
+    /{admin_url_slug}/dashboard behind a real login (see below), so `/` can
+    never show every customer's meetings again under any query string.
     """
     name = name.strip()
     if not name:
-        if not settings.admin_token or admin_token != settings.admin_token:
-            return HTMLResponse(
-                "<p style='font-family: sans-serif; padding: 2rem;'>Not authorized. "
-                "Pass your name (?name=...) or the correct admin link.</p>",
-                status_code=403,
-            )
-    runs = db.list_runs(user_name=name or None)
+        return HTMLResponse(
+            "<p style='font-family: sans-serif; padding: 2rem;'>Pass your name "
+            "(?name=...) to see your meetings.</p>",
+            status_code=200,
+        )
+    runs = db.list_runs(user_name=name)
     for run in runs:
         run["started_display"] = _format_started(run["created_at"])
         run["progress"] = _progress_for_run(run)
-    usage = []
-    if not name:
-        usage = db.usage_summary()
-        for entry in usage:
-            entry["last_active_display"] = _format_started(entry["last_active"])
     return templates.TemplateResponse(
-        "index.html", {"request": request, "runs": runs, "usage": usage, "viewing_name": name}
+        "index.html",
+        {"request": request, "runs": runs, "usage": [], "viewing_name": name, "logout_url": ""},
+    )
+
+
+def _admin_not_found() -> JSONResponse:
+    """Any slug other than settings.admin_url_slug 404s exactly like a
+    route that doesn't exist, rather than revealing "wrong password" (which
+    would confirm admin functionality lives there at all). Reuses the same
+    JSONResponse 404 pattern already used elsewhere in this file (e.g.
+    download_meeting_file above).
+    """
+    return JSONResponse({"error": "not found"}, status_code=404)
+
+
+def _is_admin_session(request: Request) -> bool:
+    return bool(request.session.get("is_admin"))
+
+
+@app.get("/{slug}/login")
+def admin_login_form(request: Request, slug: str):
+    if slug != settings.admin_url_slug or not settings.admin_url_slug:
+        return _admin_not_found()
+    error = bool(request.query_params.get("error"))
+    return templates.TemplateResponse(
+        "admin_login.html", {"request": request, "slug": slug, "error": error}
+    )
+
+
+@app.post("/{slug}/login")
+def admin_login_submit(
+    request: Request, slug: str, username: str = Form(...), password: str = Form(...)
+):
+    if slug != settings.admin_url_slug or not settings.admin_url_slug:
+        return _admin_not_found()
+    if (
+        settings.admin_username
+        and settings.admin_password
+        and username == settings.admin_username
+        and password == settings.admin_password
+    ):
+        request.session["is_admin"] = True
+        return RedirectResponse(url=f"/{slug}/dashboard", status_code=303)
+    return RedirectResponse(url=f"/{slug}/login?error=1", status_code=303)
+
+
+@app.get("/{slug}/logout")
+def admin_logout(request: Request, slug: str):
+    if slug != settings.admin_url_slug or not settings.admin_url_slug:
+        return _admin_not_found()
+    request.session.clear()
+    return RedirectResponse(url=f"/{slug}/login", status_code=303)
+
+
+@app.get("/{slug}/dashboard")
+def admin_dashboard(request: Request, slug: str):
+    """The owner's own unfiltered view of everyone's meetings plus the
+    "Usage by person" table -- today's admin_token content, unchanged, just
+    gated by an unguessable path + a real login session instead of a static
+    query-string secret.
+    """
+    if slug != settings.admin_url_slug or not settings.admin_url_slug:
+        return _admin_not_found()
+    if not _is_admin_session(request):
+        return RedirectResponse(url=f"/{slug}/login", status_code=303)
+    runs = db.list_runs(user_name=None)
+    for run in runs:
+        run["started_display"] = _format_started(run["created_at"])
+        run["progress"] = _progress_for_run(run)
+    usage = db.usage_summary()
+    for entry in usage:
+        entry["last_active_display"] = _format_started(entry["last_active"])
+    return templates.TemplateResponse(
+        "index.html",
+        {
+            "request": request,
+            "runs": runs,
+            "usage": usage,
+            "viewing_name": "",
+            "logout_url": f"/{slug}/logout",
+        },
     )
 
 
