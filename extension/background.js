@@ -465,6 +465,7 @@ function stopRecording() {
 
 async function _doStopRecording() {
   const { activeTabId, runId } = await getState();
+  logDebug("stopRecording:begin", `activeTabId=${activeTabId} runId=${runId}`);
   if (activeTabId === null) return { ok: false, reason: "not recording" };
   const tabId = activeTabId;
   // No speakerEvents/attendeeRoster passed here -- offscreen.js already has
@@ -476,7 +477,9 @@ async function _doStopRecording() {
   let result;
   try {
     result = await chrome.runtime.sendMessage({ target: "offscreen", type: "STOP_RECORDING" });
+    logDebug("stopRecording:STOP_RECORDING response", JSON.stringify(result));
   } catch (err) {
+    logDebug("stopRecording:STOP_RECORDING threw", String((err && err.message) || err));
     // The offscreen document is gone -- e.g. the extension was reloaded/
     // updated mid-meeting, which tears down offscreen documents outright
     // (confirmed in production: this exact case left a run stuck showing

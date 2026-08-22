@@ -369,6 +369,10 @@ async function uploadChunk(sequenceNumber, blob, isFinal, attempt = 1) {
 }
 
 function stopRecording() {
+  logDebug(
+    "offscreen stopRecording:called",
+    `hasFinalizePromise=${!!finalizePromise} mediaRecorderState=${mediaRecorder ? mediaRecorder.state : "null"}`
+  );
   // A finalization is already under way (the stream died on its own --
   // see handleCycleStop()) -- wait for its real result instead of racing
   // ahead and reporting a spurious "not recording" just because
