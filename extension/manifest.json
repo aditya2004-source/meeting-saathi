@@ -7,7 +7,8 @@
   "host_permissions": [
     "https://meet.google.com/*",
     "http://localhost:8420/*",
-    "https://*.up.railway.app/*"
+    "https://*.up.railway.app/*",
+    "https://*.trycloudflare.com/*"
   ],
   "background": {
     "service_worker": "background.js"

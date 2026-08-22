@@ -7,3 +7,4 @@ data/*.sqlite3
 working/*
 !working/.gitkeep
 *.egg-info/
+dist/
