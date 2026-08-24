@@ -20,7 +20,7 @@
 // can't share code) -- set once in popup.js's Setup section. Defaults to
 // the current Cloudflare Tunnel URL so a customer install works without
 // them ever typing a server address; update if the tunnel URL changes.
-const DEFAULT_SERVER_BASE_URL = "http://localhost:8420"; // TEMP: local-only testing tonight, revert to tunnel URL before sharing the extension again
+const DEFAULT_SERVER_BASE_URL = "http://localhost:8420";
 
 // Defensive: this is the very first `await` in both uploadChunk() and
 // logDebug(), and neither of those callers originally wrapped it in a
@@ -311,7 +311,13 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    // ngrok's free tier serves an HTML "are you sure you trust this link"
+    // interstitial to any request that looks like a browser navigation,
+    // instead of proxying through to the actual server -- this header is
+    // ngrok's documented way for a known client (this extension) to skip
+    // it. Harmless no-op against Railway/Cloudflare/localhost.
+    const headers = { ...(options && options.headers), "ngrok-skip-browser-warning": "true" };
+    return await fetch(url, { ...options, headers, signal: controller.signal });
   } finally {
     clearTimeout(timeoutId);
   }

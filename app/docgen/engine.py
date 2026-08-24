@@ -144,6 +144,21 @@ def empty_meeting_documents(meeting_title: str, meeting_date: str = "") -> dict:
     }
 
 
+def _normalize_literal_newlines(text: str) -> str:
+    """Gemini occasionally double-escapes a newline inside markdown_body --
+    the raw JSON contains `\\\\n` (two backslashes then "n") instead of a
+    single `\\n` escape. _repair_invalid_backslash_escapes() above correctly
+    treats a backslash-backslash pair as a valid JSON escape (a literal
+    backslash character), so json.loads() faithfully decodes it to a literal
+    two-character "\\n" in the string instead of an actual line break.
+    Confirmed in production: a Meeting Analysis document rendered as one
+    unbroken line, headings and all, because of exactly this. A business
+    document never legitimately needs the literal two-character sequence, so
+    collapsing it to a real newline is safe.
+    """
+    return text.replace("\\n", "\n")
+
+
 def _generate_document(
     system_prompt: str,
     response_schema: dict,
@@ -165,7 +180,10 @@ def _generate_document(
         f"EXTRACTED FACTS:\n{json.dumps(grounding, indent=2)}\n\n"
         f"FULL TRANSCRIPT:\n{transcript_text}"
     )
-    return _generate_json(system_prompt, response_schema, user_content, max_output_tokens=8192)
+    result = _generate_json(system_prompt, response_schema, user_content, max_output_tokens=8192)
+    if isinstance(result.get("markdown_body"), str):
+        result["markdown_body"] = _normalize_literal_newlines(result["markdown_body"])
+    return result
 
 
 def generate_documents(

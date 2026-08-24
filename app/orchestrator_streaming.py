@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Optional
 
 from app import db
-from app.chunked_state import drop as drop_state, get_or_create
+from app.chunked_state import append_segments_to_disk, drop as drop_state, get_or_create
 from app.config import settings
 from app.docgen import engine as docgen_engine
 from app.docgen.render_pdf import markdown_to_pdf
@@ -111,7 +111,7 @@ def accept_chunk(
     if run is not None and run["state"] not in _PAST_CHUNK_PROCESSING:
         db.update_run(run_id, state="chunk_processing")
 
-    state = get_or_create(run_id)
+    state = get_or_create(run_id, work_dir)
     with state.lock:
         state.pending_sequences.add(sequence)
 
@@ -144,7 +144,7 @@ def _process_chunk_then_maybe_finalize(run_id: str, sequence: int, chunk_path: P
 def _process_chunk(run_id: str, sequence: int, chunk_path: Path) -> None:
     work_dir = working_dir_for(run_id)
     recorder = TimingRecorder(work_dir)
-    state = get_or_create(run_id)
+    state = get_or_create(run_id, work_dir)
 
     duration = probe_duration_seconds(chunk_path)
     with state.lock:
@@ -175,6 +175,7 @@ def _process_chunk(run_id: str, sequence: int, chunk_path: Path) -> None:
     with state.lock:
         state.processed_segments.extend(segments)
         state.pending_sequences.discard(sequence)
+        append_segments_to_disk(work_dir, segments)
 
 
 def _persist_chunk_durations(work_dir: Path, durations: dict[int, float]) -> None:

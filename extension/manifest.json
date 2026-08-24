@@ -8,7 +8,9 @@
     "https://meet.google.com/*",
     "http://localhost:8420/*",
     "https://*.up.railway.app/*",
-    "https://*.trycloudflare.com/*"
+    "https://*.trycloudflare.com/*",
+    "https://*.ngrok-free.dev/*",
+    "https://*.ngrok-free.app/*"
   ],
   "background": {
     "service_worker": "background.js"

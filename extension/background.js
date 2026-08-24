@@ -10,7 +10,7 @@ const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 // customer's install works out of the box without them ever having to type
 // a server address -- only update this if the tunnel restarts and gets a
 // new URL (see ~/.config/systemd/user/meeting-saathi-tunnel.service).
-const DEFAULT_SERVER_BASE_URL = "http://localhost:8420"; // TEMP: local-only testing tonight, revert to tunnel URL before sharing the extension again
+const DEFAULT_SERVER_BASE_URL = "http://localhost:8420";
 
 // Defensive -- see offscreen.js's own copy of this helper for the full
 // rationale (confirmed there tonight as the actual root cause of the
@@ -40,7 +40,13 @@ async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...options, signal: controller.signal });
+    // ngrok's free tier serves an HTML "are you sure you trust this link"
+    // interstitial to any request that looks like a browser navigation,
+    // instead of proxying through to the actual server -- this header is
+    // ngrok's documented way for a known client (this extension) to skip
+    // it. Harmless no-op against Railway/Cloudflare/localhost.
+    const headers = { ...(options && options.headers), "ngrok-skip-browser-warning": "true" };
+    return await fetch(url, { ...options, headers, signal: controller.signal });
   } finally {
     clearTimeout(timeoutId);
   }

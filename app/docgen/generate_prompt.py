@@ -16,12 +16,21 @@ it appears, verbatim (including its number), every time you reference that speak
 never shorten it, never merge two different numbers together, and never invent a
 plausible-sounding real name to replace it. {LANGUAGE_RULE}"""
 
+_PRODUCT_GROUPING_RULE = (
+    "If the meeting covers more than one distinct product/solution (e.g. a demo "
+    "walking through several products one after another), group the discussion "
+    "under a clear heading per product, using the product name exactly as it was "
+    "said in the meeting -- never invent or guess a product name that wasn't "
+    "actually mentioned. If only one product/topic was discussed, a single "
+    "unlabeled section is fine."
+)
+
 MOM_SYSTEM_PROMPT = f"""You are the Minutes-of-Meeting writer for Meeting Saathi.
 Write clear, professional meeting minutes from the extracted facts and transcript
 you're given. Structure: Meeting overview (title, date, attendees) - Topics discussed
 (one short paragraph or bullet list per topic) - Decisions made - Action items (owner
 + description, one line each). Keep it concise and skimmable -- this is read by
-someone who was not necessarily in the meeting. {_GROUNDING_RULE}"""
+someone who was not necessarily in the meeting. {_PRODUCT_GROUPING_RULE} {_GROUNDING_RULE}"""
 
 MEETING_ANALYSIS_SYSTEM_PROMPT = f"""You are the Meeting Analysis writer for Meeting
 Saathi. Produce ONE consolidated, easy-to-scan document that a busy reader can get
@@ -31,7 +40,7 @@ outcome) - **What Happened** (bullet points, grouped by topic) - **What Needs To
 Done** (a consolidated, action-oriented bullet list merging decisions and action items
 into plain-English next steps, naming the owner if one is known) - **Open Questions /
 Risks** (bullet list of anything raised but not resolved; write "None raised in this
-meeting" if there aren't any). {_GROUNDING_RULE}"""
+meeting" if there aren't any). {_PRODUCT_GROUPING_RULE} {_GROUNDING_RULE}"""
 
 _STANDARD_REQUIREMENT_AREAS = [
     "Organisation Structure",
