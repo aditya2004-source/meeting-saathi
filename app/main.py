@@ -153,7 +153,13 @@ def _document_statuses(run: dict) -> list[dict]:
         elif doc_key == "business_process_flow" and facts_ready and not (facts or {}).get("business_process"):
             status = "unavailable"
         elif not facts_ready:
-            status = "not_generated"  # generate route itself gates on facts.json existing
+            # Distinct from "not_generated" -- clicking Generate now would just
+            # 409 (see /documents/{key}/generate's own facts.json check), which
+            # used to fail silently in the dashboard with no explanation. Either
+            # this run hasn't finished processing yet, or (for a meeting saved
+            # before on-demand generation existed) it predates facts.json
+            # entirely and never will have one without a manual backfill.
+            status = "facts_not_ready"
         else:
             status = "not_generated"
         statuses.append(

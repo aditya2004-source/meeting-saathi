@@ -124,6 +124,8 @@
                   <span class="muted">Generating…</span>
                 {% elif doc.status == 'unavailable' %}
                   <span class="muted">Not applicable to this meeting</span>
+                {% elif doc.status == 'facts_not_ready' %}
+                  <span class="muted">Not ready yet — still processing</span>
                 {% else %}
                   <button type="button" class="generate-btn" data-run-id="{{ run.id }}" data-doc-key="{{ doc.key }}">
                     {% if doc.status == 'failed' %}Retry{% else %}Generate{% endif %}

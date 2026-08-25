@@ -16,8 +16,8 @@
     "mean": 10.978558996461636
   },
   "render_mom_pdf": {
-    "count": 21,
-    "mean": 1.6269785749053491
+    "count": 22,
+    "mean": 1.6153390781822634
   },
   "render_requirement_gathering_pdf": {
     "count": 10,
@@ -32,8 +32,8 @@
     "mean": 0.003556986900275661
   },
   "render_meeting_analysis_pdf": {
-    "count": 11,
-    "mean": 1.3229889592730615
+    "count": 12,
+    "mean": 1.3250931349169452
   },
   "generate_meeting_analysis": {
     "count": 5,

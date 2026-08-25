@@ -63,6 +63,11 @@
         span.className = "muted";
         span.textContent = "Not applicable to this meeting";
         action.appendChild(span);
+      } else if (doc.status === "facts_not_ready") {
+        const span = document.createElement("span");
+        span.className = "muted";
+        span.textContent = "Not ready yet — still processing";
+        action.appendChild(span);
       } else {
         const btn = document.createElement("button");
         btn.type = "button";
@@ -210,14 +215,44 @@
     const docKey = btn.dataset.docKey;
     btn.disabled = true;
     btn.textContent = "Generating…";
+    let requestFailed = false;
+    let failureMessage = "";
     try {
-      await fetch(`/meetings/${encodeURIComponent(runId)}/documents/${encodeURIComponent(docKey)}/generate`, {
-        method: "POST",
-      });
+      const response = await fetch(
+        `/meetings/${encodeURIComponent(runId)}/documents/${encodeURIComponent(docKey)}/generate`,
+        { method: "POST" }
+      );
+      if (!response.ok) {
+        requestFailed = true;
+        try {
+          const body = await response.json();
+          failureMessage = body.message || body.error || `server returned ${response.status}`;
+        } catch {
+          failureMessage = `server returned ${response.status}`;
+        }
+      }
     } catch (err) {
-      // Ignored -- the next poll will show whatever the server's actual
-      // state is, including a "failed" status with an error if this request
-      // itself didn't even land.
+      // A network-level failure (server unreachable, etc.) -- the request
+      // never even landed, so there's nothing for the next poll to reflect.
+      requestFailed = true;
+      failureMessage = "could not reach the server";
+    }
+    if (requestFailed) {
+      // Previously failed silently here -- the button just quietly reverted
+      // on the next poll with no explanation (confirmed: this is exactly what
+      // happens when facts.json isn't ready yet, e.g. a meeting saved before
+      // on-demand generation existed, or one still mid-processing -- the
+      // server correctly 409s, but nothing told the user why nothing happened).
+      btn.disabled = false;
+      btn.textContent = "Retry";
+      let errEl = btn.parentElement.querySelector(".document-error");
+      if (!errEl) {
+        errEl = document.createElement("span");
+        errEl.className = "document-error";
+        btn.parentElement.appendChild(errEl);
+      }
+      errEl.textContent = failureMessage;
+      return;
     }
     const card = document.querySelector(`.meeting-card[data-run-id="${runId}"]`);
     if (card) {
