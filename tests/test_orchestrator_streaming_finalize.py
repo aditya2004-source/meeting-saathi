@@ -1,15 +1,14 @@
-"""Exercises orchestrator_streaming.finalize_run()'s wiring end-to-end with
-fakes only for Gemini (docgen_engine.generate_documents) and PDF rendering
-(markdown_to_pdf, which needs a real Playwright browser) -- the real bug
-this originally guarded against (finalize_run() never called
-resolve_speaker_names() at all) could only be caught by a test that runs
-the actual finalize_run() function, not by speaker_names.py's own
-pure-function unit tests. app.storage's create_meeting_folder()/
-write_meeting_file() run for real against a tmp_path
-settings.base_storage_dir, since they're cheap plain filesystem calls and
-running them for real is better coverage than faking them too -- this also
-directly exercises the incremental-delivery behavior (each document
-written to its final folder as soon as its own Gemini call "completes").
+"""Exercises orchestrator_streaming.finalize_run()'s wiring end-to-end with a
+fake only for Gemini (docgen_engine.extract_meeting_facts) -- the real bug this
+originally guarded against (finalize_run() never called resolve_speaker_names()
+at all) could only be caught by a test that runs the actual finalize_run()
+function, not by speaker_names.py's own pure-function unit tests. app.storage's
+create_meeting_folder()/write_meeting_file() run for real against a tmp_path
+settings.base_storage_dir, since they're cheap plain filesystem calls.
+
+No document (MOM, BRD, ...) is generated here anymore -- finalize_run() now
+stops at transcript.json + facts.json (see app/docgen/registry.py for the
+on-demand generation that happens later, from the dashboard).
 """
 import json
 from pathlib import Path
@@ -43,30 +42,11 @@ def _install_fakes(monkeypatch, run_row):
 
     seen: dict = {}
 
-    def fake_generate_documents(
-        title, transcript_text, attendees=None, meeting_date="", recorder=None, on_document_ready=None
-    ):
+    def fake_extract_meeting_facts(transcript_text):
         seen["transcript_text"] = transcript_text
-        seen["attendees"] = attendees
-        seen["meeting_date"] = meeting_date
-        mom = {"markdown_body": "mom body"}
-        meeting_analysis = {"markdown_body": "analysis body"}
-        # Real generate_documents() fires on_document_ready per-document as
-        # each Gemini call completes -- order isn't guaranteed there, so
-        # exercise that here too rather than assuming mom always "finishes"
-        # first.
-        if on_document_ready is not None:
-            on_document_ready("meeting_analysis", meeting_analysis)
-            on_document_ready("mom", mom)
-        return {"mom": mom, "meeting_analysis": meeting_analysis}
+        return {"requirements": [], "topics_discussed": [], "decisions": [], "action_items": [], "key_quotes": []}
 
-    monkeypatch.setattr(orchestrator_streaming.docgen_engine, "generate_documents", fake_generate_documents)
-
-    def fake_markdown_to_pdf(markdown_text, dest_path):
-        dest_path.write_bytes(b"%PDF-fake")
-        return dest_path
-
-    monkeypatch.setattr(orchestrator_streaming, "markdown_to_pdf", fake_markdown_to_pdf)
+    monkeypatch.setattr(orchestrator_streaming.docgen_engine, "extract_meeting_facts", fake_extract_meeting_facts)
 
     return seen
 
@@ -92,8 +72,9 @@ def test_finalize_run_resolves_dom_names_and_never_leaves_bare_placeholders(
         "state": "chunk_processing",
         "folder_path": None,
         "error_message": None,
+        "client_name": "",
     }
-    seen = _install_fakes(monkeypatch, run_row)
+    _install_fakes(monkeypatch, run_row)
 
     work_dir = orchestrator_streaming.working_dir_for(run_id)
     # Full accumulated speaker_events.json, as it would exist at finalize
@@ -137,17 +118,15 @@ def test_finalize_run_resolves_dom_names_and_never_leaves_bare_placeholders(
         assert not speaker.startswith("Speaker ")
 
     # Real names (roster-independent here, since no attendee_roster.json was
-    # written) still make it into the deterministic attendee list; the
-    # unidentified placeholder must not.
-    assert seen["attendees"] == ["Priya Shah", "Rahul Verma"]
+    # written) still make it into the deterministic attendee list.
     assert transcript["attendees"] == ["Priya Shah", "Rahul Verma"]
 
     assert run_row["state"] == "saved"
     assert run_row["folder_path"] is not None
-    assert (folder / "MOM.md").read_text(encoding="utf-8") == "mom body"
-    assert (folder / "MOM.pdf").read_bytes() == b"%PDF-fake"
-    assert (folder / "Meeting_Analysis.md").read_text(encoding="utf-8") == "analysis body"
-    assert (folder / "Meeting_Analysis.pdf").read_bytes() == b"%PDF-fake"
+    assert (folder / "facts.json").is_file()
+    # No document is generated automatically anymore.
+    assert not (folder / "MOM.md").exists()
+    assert not (folder / "MOM.pdf").exists()
 
 
 def test_finalize_run_without_speaker_events_still_fills_placeholders(tmp_path, monkeypatch, run_id):
@@ -160,6 +139,7 @@ def test_finalize_run_without_speaker_events_still_fills_placeholders(tmp_path, 
         "state": "chunk_processing",
         "folder_path": None,
         "error_message": None,
+        "client_name": "",
     }
     _install_fakes(monkeypatch, run_row)
 
@@ -193,7 +173,7 @@ def test_finalize_run_with_no_speech_skips_gemini_and_still_saves(tmp_path, monk
     # empty transcript made it return non-JSON text, crashing json.loads()
     # ("Unterminated string starting at: line 1 column 82"). finalize_run()
     # must recognize "no segments at all" and skip Gemini entirely rather
-    # than reach generate_documents() with nothing to summarize.
+    # than reach extract_meeting_facts() with nothing to summarize.
     _configure_dirs(monkeypatch, tmp_path)
 
     run_row = {
@@ -203,13 +183,14 @@ def test_finalize_run_with_no_speech_skips_gemini_and_still_saves(tmp_path, monk
         "state": "chunk_processing",
         "folder_path": None,
         "error_message": None,
+        "client_name": "",
     }
     _install_fakes(monkeypatch, run_row)
 
-    def _fail_if_called(title, transcript_text, recorder=None, **kwargs):
-        raise AssertionError("generate_documents() must not be called for a transcript with zero segments")
+    def _fail_if_called(transcript_text):
+        raise AssertionError("extract_meeting_facts() must not be called for a transcript with zero segments")
 
-    monkeypatch.setattr(orchestrator_streaming.docgen_engine, "generate_documents", _fail_if_called)
+    monkeypatch.setattr(orchestrator_streaming.docgen_engine, "extract_meeting_facts", _fail_if_called)
 
     orchestrator_streaming.working_dir_for(run_id)  # no chunks/segments at all -- nobody spoke
 
@@ -217,13 +198,38 @@ def test_finalize_run_with_no_speech_skips_gemini_and_still_saves(tmp_path, monk
 
     assert run_row["state"] == "saved"
     folder = Path(run_row["folder_path"])
-    assert "No speech was captured" in (folder / "MOM.md").read_text(encoding="utf-8")
+    facts = json.loads((folder / "facts.json").read_text(encoding="utf-8"))
+    assert facts["requirements"] == []
+    assert facts["business_process"] is None
 
     transcript = json.loads((folder / "transcript.json").read_text(encoding="utf-8"))
     assert transcript["segments"] == []
 
 
-def test_finalize_run_makes_folder_and_transcript_available_before_documents_finish(
+def test_finalize_run_persists_client_name_into_transcript(tmp_path, monkeypatch, run_id):
+    _configure_dirs(monkeypatch, tmp_path)
+
+    run_row = {
+        "id": run_id,
+        "title": "Weekly Sync",
+        "created_at": "2026-01-01T00:00:00+00:00",
+        "state": "chunk_processing",
+        "folder_path": None,
+        "error_message": None,
+        "client_name": "Acme Corp",
+    }
+    _install_fakes(monkeypatch, run_row)
+
+    orchestrator_streaming.working_dir_for(run_id)  # no segments -- keeps this test focused on client_name
+
+    orchestrator_streaming.finalize_run(run_id)
+
+    folder = Path(run_row["folder_path"])
+    transcript = json.loads((folder / "transcript.json").read_text(encoding="utf-8"))
+    assert transcript["client_name"] == "Acme Corp"
+
+
+def test_finalize_run_makes_folder_and_transcript_available_before_facts_finish(
     tmp_path, monkeypatch, run_id
 ):
     # The whole point of incremental delivery: folder_path (and the
@@ -238,6 +244,7 @@ def test_finalize_run_makes_folder_and_transcript_available_before_documents_fin
         "state": "chunk_processing",
         "folder_path": None,
         "error_message": None,
+        "client_name": "",
     }
     states_seen_with_folder_path: list[str] = []
 
@@ -250,20 +257,10 @@ def test_finalize_run_makes_folder_and_transcript_available_before_documents_fin
         return dict(run_row)
 
     monkeypatch.setattr(db, "update_run", fake_update_run)
-
-    def fake_generate_documents(
-        title, transcript_text, attendees=None, meeting_date="", recorder=None, on_document_ready=None
-    ):
-        mom = {"markdown_body": "mom body"}
-        meeting_analysis = {"markdown_body": "analysis body"}
-        if on_document_ready is not None:
-            on_document_ready("mom", mom)
-            on_document_ready("meeting_analysis", meeting_analysis)
-        return {"mom": mom, "meeting_analysis": meeting_analysis}
-
-    monkeypatch.setattr(orchestrator_streaming.docgen_engine, "generate_documents", fake_generate_documents)
     monkeypatch.setattr(
-        orchestrator_streaming, "markdown_to_pdf", lambda text, dest_path: dest_path.write_bytes(b"%PDF-fake")
+        orchestrator_streaming.docgen_engine,
+        "extract_meeting_facts",
+        lambda transcript_text: {"requirements": []},
     )
 
     orchestrator_streaming.working_dir_for(run_id)
@@ -272,9 +269,9 @@ def test_finalize_run_makes_folder_and_transcript_available_before_documents_fin
 
     orchestrator_streaming.finalize_run(run_id)
 
-    # folder_path was already set while still "generating_docs" -- not only
+    # folder_path was already set while still "extracting_facts" -- not only
     # once the run reached "saved".
-    assert "generating_docs" in states_seen_with_folder_path
+    assert "extracting_facts" in states_seen_with_folder_path
     folder = Path(run_row["folder_path"])
     assert (folder / "transcript.json").is_file()
     assert (folder / "transcript.txt").is_file()

@@ -74,6 +74,21 @@ async function getUserName() {
   return userName || "";
 }
 
+// A stable identifier for this one extension install, generated once and kept
+// forever (chrome.storage.local, not .session -- must survive browser
+// restarts, not just service-worker restarts). Fixes a real usage-tracking bug:
+// userName is a free-text display name a person can retype at any time (see
+// popup.js's Setup section), which used to fragment their history in the
+// admin panel's usage table (app/db.py's usage_summary()) every time they did.
+// deviceId is the actual grouping key now; userName is just the label shown.
+async function getDeviceId() {
+  const { deviceId } = await chrome.storage.local.get("deviceId");
+  if (deviceId) return deviceId;
+  const newId = crypto.randomUUID();
+  await chrome.storage.local.set({ deviceId: newId });
+  return newId;
+}
+
 // Comparison key for "is this the same person" -- mirrors
 // content_script.js's/app/pipeline/roster.py's own normalizeKey()/
 // normalize_key() (duplicated rather than shared). Two roster scrapes of
@@ -246,22 +261,27 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo) => {
 // needs somewhere to upload each chunk to as it's produced during the
 // call, unlike the old design where the server only heard about a meeting
 // once it was already over.
-async function startMeetingRun(title) {
-  const [serverBaseUrl, userName] = await Promise.all([getServerBaseUrl(), getUserName()]);
+async function startMeetingRun(title, clientName = "") {
+  const [serverBaseUrl, userName, deviceId] = await Promise.all([
+    getServerBaseUrl(),
+    getUserName(),
+    getDeviceId(),
+  ]);
   const formData = new FormData();
   formData.append("title", title);
   formData.append("user_name", userName);
+  formData.append("client_name", clientName || "");
+  formData.append("device_id", deviceId);
   const response = await fetchWithTimeout(
     `${serverBaseUrl}/meetings/start`,
     { method: "POST", body: formData },
     FETCH_TIMEOUT_MS
   );
   if (!response.ok) {
-    // The daily-limit rejection (see app/main.py's /meetings/start) carries
-    // a friendly, already-Hinglish message meant to be shown as-is --
-    // surface it instead of a generic "server returned 429" so the popup's
-    // existing `Could not start: ${result.error}` path shows something
-    // useful. Any other non-ok response falls back to the old generic text.
+    // Any non-ok response's JSON "message" field (if it has one) is shown
+    // as-is, since the popup's `Could not start: ${result.error}` path
+    // expects something human-readable -- falls back to a generic message
+    // otherwise.
     let message = `server returned ${response.status} from /meetings/start`;
     try {
       const body = await response.json();
@@ -275,7 +295,7 @@ async function startMeetingRun(title) {
   return body.id;
 }
 
-async function startRecording(tabId, title) {
+async function startRecording(tabId, title, clientName = "") {
   // Declared here, not inside the try, so the catch block below can still
   // see it if a LATER step fails -- startMeetingRun() already created a DB
   // row by that point, and without this the row would sit at
@@ -283,7 +303,7 @@ async function startRecording(tabId, title) {
   let runId = null;
   try {
     logDebug("startRecording:begin", tabId);
-    runId = await startMeetingRun(title);
+    runId = await startMeetingRun(title, clientName);
     logDebug("startRecording:got runId", runId);
     await ensureOffscreenDocument();
     logDebug("startRecording:offscreen document ready", "");
@@ -642,7 +662,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "MANUAL_START") {
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const tab = tabs[0];
-      startRecording(tab.id, message.title || tab.title || "Google Meet").then(sendResponse);
+      startRecording(tab.id, message.title || tab.title || "Google Meet", message.clientName || "").then(
+        sendResponse
+      );
     });
     return true; // keep sendResponse alive for the async chrome.tabs.query
   }

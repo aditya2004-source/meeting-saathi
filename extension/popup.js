@@ -1,5 +1,6 @@
 const statusEl = document.getElementById("status");
 const titleEl = document.getElementById("title");
+const clientNameEl = document.getElementById("clientName");
 const toggleBtn = document.getElementById("toggle");
 const micSectionEl = document.getElementById("micSection");
 const micStatusEl = document.getElementById("micStatus");
@@ -191,15 +192,18 @@ toggleBtn.addEventListener("click", async () => {
         blockForMissingName();
         return;
       }
-      chrome.runtime.sendMessage({ type: "MANUAL_START", title: titleEl.value }, (result) => {
-        if (result && result.ok === false) {
-          statusEl.textContent = `Could not start: ${result.error || "unknown error"}`;
-          statusEl.style.color = "#c0392b";
-          toggleBtn.disabled = false;
-        } else {
-          refreshStatus();
+      chrome.runtime.sendMessage(
+        { type: "MANUAL_START", title: titleEl.value, clientName: clientNameEl.value },
+        (result) => {
+          if (result && result.ok === false) {
+            statusEl.textContent = `Could not start: ${result.error || "unknown error"}`;
+            statusEl.style.color = "#c0392b";
+            toggleBtn.disabled = false;
+          } else {
+            refreshStatus();
+          }
         }
-      });
+      );
     }
   });
 });

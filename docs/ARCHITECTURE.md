@@ -38,7 +38,9 @@ AFTER THE CALL (only the last short chunk's worth of work left)
    -> once every chunk has finished processing, the accumulated
       speaker-labeled segments are assembled into transcript.json (the
       durable backup) and the rest proceeds the same as the legacy path
-      below: Gemini document generation -> PDF -> save
+      below: extract structured facts -> save (facts.json). No document
+      generates automatically past this point -- see "On-demand document
+      generation" below.
 ```
 
 **Chunked diarization** (`app/pipeline/diarize.py:diarize_chunk`,
@@ -67,13 +69,29 @@ Both paths converge on the same tail once a transcript is assembled:
       fill_unresolved_with_excerpts() guarantees nothing placeholder-shaped
       survives into the final documents -- see app/pipeline/DESIGN.md
    -> merge -> transcript.json (speaker-labeled, timestamped, the durable backup)
-   -> Gemini document generation (Call 1: structured extraction ->
-      Call 2 x3, grounded and run CONCURRENTLY: MOM, Requirement Gathering
-      Sheet, Discussion+Action-Points)
-   -> Markdown -> PDF (Playwright + system Chrome, 3 renders run CONCURRENTLY)
+   -> Gemini fact extraction (one call: structured requirements/decisions/
+      risks/assumptions/dependencies/open_questions/commitments/business_process)
+      -> facts.json -- the run reaches state="saved" here
    -> Filesystem writer: "<Meeting Title> - <YYYY-MM-DD HHmm>/" folder,
-      written atomically
+      written atomically, holding transcript.json + facts.json (no document
+      yet)
 ```
+
+## On-demand document generation
+
+**No document (MOM, BRD, FRD, User Stories, Acceptance Criteria, Business
+Process Flow) is generated automatically anymore** — every one is generated
+only when a user explicitly clicks "Generate" for it on the dashboard,
+reading `facts.json`/`transcript.json` back from the folder above. This is
+the project's actual Gemini-quota-management mechanism: the user decides
+what they need, rather than every meeting spending a fixed, growing number
+of Gemini calls whether or not those documents end up used. FRD and
+Business Process Flow cost zero Gemini calls (pure deterministic renders of
+the extracted facts); User Stories + Acceptance Criteria share one call; MOM,
+Meeting Analysis, and BRD each get their own. See `app/docgen/registry.py`
+(the key→generator→filenames mapping) and `app/docgen/DESIGN.md` for the
+full design, including the Business Process Flow diagram's Mermaid rendering
+pipeline.
 
 ## Component documentation
 
@@ -81,7 +99,7 @@ Both paths converge on the same tail once a transcript is assembled:
 |---|---|---|
 | `extension/` | Call detection, audio capture/mixing, message flow, speaker-name detection | [`extension/DESIGN.md`](../extension/DESIGN.md) |
 | `app/pipeline/` | Transcription, diarization, alignment, speaker-name resolution, transcript building | [`app/pipeline/DESIGN.md`](../app/pipeline/DESIGN.md) |
-| `app/docgen/` | The two-call Gemini prompting pattern, the Requirement Gathering Sheet's structured schema, PDF rendering | [`app/docgen/DESIGN.md`](../app/docgen/DESIGN.md) |
+| `app/docgen/` | Fact extraction, the on-demand document registry, per-document Gemini prompts, PDF/diagram rendering | [`app/docgen/DESIGN.md`](../app/docgen/DESIGN.md) |
 | `app/` (core) | Web layer, legacy + chunked orchestrators, state machine, config, filesystem writer | [`app/DESIGN.md`](../app/DESIGN.md) |
 
 ## Code layout
@@ -99,12 +117,14 @@ extension/                 The Chrome extension (Manifest V3)
 app/
 ├── DESIGN.md
 ├── main.py                 FastAPI web server: status page, legacy /meetings/upload,
-│                            and the chunked /meetings/start|{id}/chunk|{id}/finalize trio
+│                            the chunked /meetings/start|{id}/chunk|{id}/finalize trio,
+│                            and the on-demand /meetings/{id}/documents/{key}/generate route
 ├── config.py                Reads .env into a typed Settings object
 ├── db.py                     SQLite: one row per meeting, tracks its state
 ├── orchestrator.py          Drives one whole-file upload through the legacy pipeline
 ├── orchestrator_streaming.py Drives the chunked pipeline (accumulate chunks -> finalize)
 ├── chunked_state.py          In-memory per-run bookkeeping for in-flight chunks
+├── document_generation_state.py  In-memory per-run bookkeeping for in-flight on-demand document generation
 ├── pipeline/
 │   ├── DESIGN.md
 │   ├── download.py       Working-directory helper
@@ -116,16 +136,17 @@ app/
 │   └── timing.py          Per-stage timing, surfaced on the status page while a run is in progress
 ├── docgen/
 │   ├── DESIGN.md
-│   ├── extract_prompt.py     Gemini prompt: pull structured facts from transcript
-│   ├── generate_prompt.py    Gemini prompts: write MOM / Requirement Gathering Sheet / Action Points
-│   ├── render_tables.py       Renders the Requirement Gathering Sheet's rows to a markdown table
-│   ├── engine.py               Runs those Gemini calls (the 3 generate calls run concurrently)
-│   └── render_pdf.py           Turns the generated Markdown into PDF (3 renders run concurrently)
+│   ├── extract_prompt.py     Gemini prompt: pull structured facts from transcript (Call 1, still automatic)
+│   ├── generate_prompt.py    Gemini prompts: write MOM / Meeting Analysis / BRD / User Stories+Acceptance Criteria
+│   ├── render_tables.py       Renders structured facts (FRD, User Stories, Acceptance Criteria) to markdown tables
+│   ├── render_diagram.py      Business Process Flow: facts -> Mermaid (pure) -> PDF (Playwright)
+│   ├── registry.py             Single source of truth: doc key -> generator -> filenames
+│   └── engine.py               extract_meeting_facts() + one generator function per document/group
 ├── storage.py            Builds the "<Title> - <date>" folder, writes files safely
-└── web/                   The HTML/CSS for the status page
+└── web/                   The HTML/CSS/JS for the status page, incl. the document catalogue
 
 scripts/
-├── regenerate_docs.py     Re-run docgen+render from an existing transcript.json
+├── regenerate_docs.py     Re-run on-demand doc generation (registry-driven) from an existing transcript.json
 └── benchmark_pipeline.py  Before/after timing: legacy whole-file vs. chunked pipeline
 ```
 
@@ -135,8 +156,7 @@ Each meeting run moves through these states (visible on the status page),
 stored in `data/runs.sqlite3`. Legacy whole-file path:
 
 ```
-idle -> received -> transcribing -> diarizing -> generating_docs
-     -> rendering -> saving -> saved
+idle -> received -> transcribing -> diarizing -> extracting_facts -> saved
 ```
 
 Chunked/streaming path (what real meetings use now) instead goes through
@@ -144,9 +164,15 @@ one state, `chunk_processing`, for the whole in-call chunk-accumulation
 period:
 
 ```
-idle -> received -> chunk_processing -> generating_docs
-     -> rendering -> saving -> saved
+idle -> received -> chunk_processing -> extracting_facts -> saved
 ```
+
+`extracting_facts` covers the one remaining automatic Gemini call. No
+document generation is part of this state machine at all — each document's
+own generate/ready/failed status is tracked separately (filesystem-computed,
+plus `app/document_generation_state.py` for "generating" — see "On-demand
+document generation" above), independent of this run ever needing to leave
+`saved`.
 
 (or `failed`, with an error message, at any step, either path)
 
@@ -155,10 +181,12 @@ idle -> received -> chunk_processing -> generating_docs
 `GET /` and `GET /meetings/{run_id}/status` (`app/main.py`) both surface a
 live, auto-updating status per meeting — no manual reload needed. This
 answers, at a glance, right after the extension leaves a call: was audio
-actually captured, which stage is processing in now (down to which of the
-3 concurrent Gemini documents are still generating), an ETA for the
-bounded post-meeting tail, and the exact saved folder path the moment it's
-done. See `app/DESIGN.md`'s "Live processing status" section for the full
+actually captured, which stage is processing in now, an ETA for the bounded
+post-meeting tail (now just fact extraction — no document generates
+automatically, see "On-demand document generation" above), and the exact
+saved folder path the moment it's done. Each document's own generate/ready
+status is a separate catalogue on the same page. See `app/DESIGN.md`'s
+"Live processing status" section for the full
 design (`app/progress.py`'s `describe_progress()`, the polling
 `app/web/static/status.js`, and the persisted cross-run stage-duration
 history that makes the ETA real rather than guessed).

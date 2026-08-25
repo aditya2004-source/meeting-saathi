@@ -128,3 +128,90 @@ def test_usage_summary_aggregates_per_user(tmp_path, monkeypatch):
     assert summary["Priya Shah"]["today"] == 2
     assert summary["Rahul Verma"]["total"] == 1
     assert "" not in summary
+
+
+def test_create_run_stores_client_name_and_normalizes_it(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+
+    run = db.create_run(title="Kickoff", audio_path="", client_name="  Acme  Corp ")
+
+    assert run["client_name"] == "  Acme  Corp "
+    assert run["client_name_normalized"] == "acme corp"
+
+
+def test_list_runs_filters_by_client_name_case_and_whitespace_insensitively(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+
+    db.create_run(title="M1", audio_path="", client_name="Acme Corp")
+    db.create_run(title="M2", audio_path="", client_name="Other Client")
+    db.create_run(title="M3", audio_path="")  # no client -- must never match a client filter
+
+    runs = db.list_runs(client_name="  acme   corp  ")
+
+    assert [run["title"] for run in runs] == ["M1"]
+
+
+def test_list_runs_client_filter_never_matches_across_empty_client_names(tmp_path, monkeypatch):
+    # An empty client_name filter must not be treated as "the shared client
+    # every unlabeled meeting belongs to" -- list_runs() only applies the
+    # client filter clause when client_name is truthy.
+    _fresh_db(tmp_path, monkeypatch)
+
+    db.create_run(title="M1", audio_path="")
+    db.create_run(title="M2", audio_path="")
+
+    assert {run["title"] for run in db.list_runs(client_name=None)} == {"M1", "M2"}
+
+
+def test_set_client_name_updates_both_columns(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+
+    run = db.create_run(title="Kickoff", audio_path="")
+    updated = db.set_client_name(run["id"], "Beta Inc")
+
+    assert updated["client_name"] == "Beta Inc"
+    assert updated["client_name_normalized"] == "beta inc"
+
+
+def test_distinct_client_names_returns_display_strings_deduped(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+
+    db.create_run(title="M1", audio_path="", client_name="Acme Corp")
+    db.create_run(title="M2", audio_path="", client_name="acme  corp")  # same client, different casing/spacing
+    db.create_run(title="M3", audio_path="", client_name="Beta Inc")
+    db.create_run(title="M4", audio_path="")  # no client -- must be excluded
+
+    names = db.distinct_client_names()
+
+    assert len(names) == 2
+    assert {db.normalize_client_name(n) for n in names} == {"acme corp", "beta inc"}
+
+
+def test_usage_summary_groups_by_device_id_surviving_a_display_name_change(tmp_path, monkeypatch):
+    # The bug this fixes: retyping a different display name used to fragment
+    # one person's usage history across multiple rows. device_id is now the
+    # real grouping key; user_name is just the most-recently-seen label.
+    _fresh_db(tmp_path, monkeypatch)
+
+    db.create_run(title="M1", audio_path="", user_name="Priya", device_id="device-1")
+    db.create_run(title="M2", audio_path="", user_name="Priya Shah", device_id="device-1")
+
+    summary = db.usage_summary()
+
+    assert len(summary) == 1
+    assert summary[0]["total"] == 2
+    assert summary[0]["user_name"] == "Priya Shah"  # the most recently-seen label
+
+
+def test_usage_summary_falls_back_to_user_name_for_rows_without_device_id(tmp_path, monkeypatch):
+    # Historical rows predating the device_id column (device_id == "") --
+    # must still show up, grouped by user_name as before.
+    _fresh_db(tmp_path, monkeypatch)
+
+    db.create_run(title="M1", audio_path="", user_name="Rahul Verma")
+
+    summary = db.usage_summary()
+
+    assert len(summary) == 1
+    assert summary[0]["user_name"] == "Rahul Verma"
+    assert summary[0]["total"] == 1

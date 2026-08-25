@@ -9,20 +9,29 @@ This README is a technical overview; see `docs/` for more:
 - [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — how it's built
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — common issues
 
-A Chrome extension records your Google Meet calls, and after the meeting
-ends, generates:
+A Chrome extension records your Google Meet calls. After the meeting ends,
+the transcript and a set of extracted facts (requirements, decisions, risks,
+assumptions, dependencies, open questions, commitments, and — if a business
+process was walked through — a structured AS-IS process) are ready
+automatically. **No document generates automatically** — from the dashboard,
+generate only whichever of these you actually need, on demand:
 
 - **MOM** (Minutes of Meeting)
-- **Requirement Gathering Sheet** (a 4-column table mapping what the client
-  discussed to how it fits into Sarathi, area by area)
-- **Discussion + Action Points** (who said what, who owns what action)
+- **Meeting Analysis** (one consolidated summary)
+- **BRD** (Business Requirements Document)
+- **FRD** (Functional Requirements Document) — instant, no API call
+- **User Stories** + **Acceptance Criteria** (one shared generation)
+- **Business Process Flow** (AS-IS) — a Mermaid flowchart + PDF, instant, no
+  API call; any part the transcript left unclear is visually flagged
+  "Needs Clarification" rather than guessed
 
 Everything is saved automatically — no manual downloads — into
 `<BASE_STORAGE_DIR>/<Meeting Title> - <YYYY-MM-DD HHmm>/`, along with the full
 speaker-labeled transcript as a backup. Document generation uses Gemini
-(Google, free tier); everything else (recording, transcription, figuring
-out who's speaking) runs locally or inside the free Chrome extension by
-default. Optionally, setting `ASSEMBLYAI_API_KEY` offloads the slow
+(Google, free tier), only when you click "Generate" for a specific document;
+everything else (recording, transcription, figuring out who's speaking, FRD,
+Business Process Flow) runs locally or inside the free Chrome extension.
+Optionally, setting `ASSEMBLYAI_API_KEY` offloads the slow
 diarization-fallback case (sparse DOM speaker coverage) to AssemblyAI
 (paid, pay-as-you-go ~$0.17/hour) instead of local pyannote — see
 `.env.example`.
@@ -43,12 +52,16 @@ diarization-fallback case (sparse DOM speaker coverage) to AssemblyAI
    a best-effort timeline of "who's currently speaking" the extension
    captures from Meet's UI while recording (falls back to "Speaker N" when
    there's no confident match).
-4. Gemini (Google's API, free tier) turns the speaker-labeled transcript
-   into MOM, Requirement Gathering Sheet, and Action Points documents,
-   using a two-call "extract then generate" pattern that stays grounded in
-   the transcript (no invented facts).
-5. Markdown docs are rendered to PDF via headless Chrome (Playwright), and
-   everything is written to the meeting's folder.
+4. Gemini (Google's API, free tier) extracts structured facts from the
+   speaker-labeled transcript — this one call is still automatic, staying
+   grounded in the transcript (no invented facts; anything unclear is marked
+   "needs clarification" instead of guessed).
+5. On the dashboard, click "Generate" on whichever document(s) you actually
+   need — each triggers its own Gemini call (or, for FRD/Business Process
+   Flow, a free local render) and is rendered to PDF (Markdown docs via
+   headless Chrome/Playwright; Business Process Flow via a Mermaid diagram,
+   also exported as an editable `.mmd` file), written into the meeting's
+   folder.
 
 ## Setup
 
@@ -100,11 +113,16 @@ extension (testing/fallback).
 
 ## Regenerating documents without re-processing the recording
 
-If you want to tweak the MOM/Requirement-Gathering-Sheet/Action-Points prompts and re-run generation
-against an existing transcript (without re-transcribing or re-diarizing):
+If you want to tweak a document's prompt and re-run generation against an
+existing transcript (without re-transcribing or re-diarizing), or just
+generate one from the command line instead of the dashboard:
 
 ```bash
+# every document (extracts facts.json first if it doesn't already exist)
 python scripts/regenerate_docs.py "/path/to/meeting/folder/transcript.json"
+
+# just one or a few (see app/docgen/registry.py for the full key list)
+python scripts/regenerate_docs.py "/path/to/meeting/folder/transcript.json" mom brd
 ```
 
 ## Tests

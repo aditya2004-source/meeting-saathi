@@ -55,8 +55,9 @@ def test_correct_slug_get_login_shows_the_form(monkeypatch):
 
 def test_post_correct_credentials_sets_session_and_redirects_to_dashboard(monkeypatch):
     _patch_admin_settings(monkeypatch)
-    monkeypatch.setattr(db, "list_runs", lambda user_name=None: [])
+    monkeypatch.setattr(db, "list_runs", lambda user_name=None, client_name=None: [])
     monkeypatch.setattr(db, "usage_summary", lambda: [])
+    monkeypatch.setattr(db, "distinct_client_names", lambda user_name=None: [])
 
     fresh_client = TestClient(app, base_url="https://testserver")
     response = fresh_client.post(
@@ -102,11 +103,12 @@ def test_dashboard_with_valid_session_shows_usage_table_and_all_runs(monkeypatch
     _patch_admin_settings(monkeypatch)
     calls = []
 
-    def fake_list_runs(user_name=None):
+    def fake_list_runs(user_name=None, client_name=None):
         calls.append(user_name)
         return []
 
     monkeypatch.setattr(db, "list_runs", fake_list_runs)
+    monkeypatch.setattr(db, "distinct_client_names", lambda user_name=None: [])
     monkeypatch.setattr(
         db,
         "usage_summary",
@@ -130,8 +132,9 @@ def test_dashboard_with_valid_session_shows_usage_table_and_all_runs(monkeypatch
 
 def test_logout_clears_session_so_dashboard_redirects_to_login_again(monkeypatch):
     _patch_admin_settings(monkeypatch)
-    monkeypatch.setattr(db, "list_runs", lambda user_name=None: [])
+    monkeypatch.setattr(db, "list_runs", lambda user_name=None, client_name=None: [])
     monkeypatch.setattr(db, "usage_summary", lambda: [])
+    monkeypatch.setattr(db, "distinct_client_names", lambda user_name=None: [])
 
     fresh_client = TestClient(app, base_url="https://testserver")
     fresh_client.post(f"/{_SLUG}/login", data={"username": _USERNAME, "password": _PASSWORD})

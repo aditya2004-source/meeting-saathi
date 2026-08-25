@@ -1,6 +1,5 @@
 import json
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Callable, Optional
+from typing import Optional
 
 from google import genai
 from google.genai import types
@@ -8,10 +7,20 @@ from google.genai import types
 from app.config import settings
 from app.docgen.extract_prompt import EXTRACT_RESPONSE_SCHEMA, EXTRACT_SYSTEM_PROMPT
 from app.docgen.generate_prompt import (
+    BRD_RESPONSE_SCHEMA,
+    BRD_SYSTEM_PROMPT,
     MEETING_ANALYSIS_RESPONSE_SCHEMA,
     MEETING_ANALYSIS_SYSTEM_PROMPT,
     MOM_RESPONSE_SCHEMA,
     MOM_SYSTEM_PROMPT,
+    STORIES_AND_ACCEPTANCE_CRITERIA_RESPONSE_SCHEMA,
+    STORIES_AND_ACCEPTANCE_CRITERIA_SYSTEM_PROMPT,
+)
+from app.docgen.render_diagram import render_business_process_mermaid
+from app.docgen.render_tables import (
+    render_acceptance_criteria_markdown,
+    render_frd_markdown,
+    render_user_stories_markdown,
 )
 from app.pipeline.timing import TimingRecorder, timed
 
@@ -103,9 +112,7 @@ def _generate_json(
             )
         # A bare JSONDecodeError ("Unterminated string starting at: line 1
         # column 82") gives no clue what Gemini actually returned -- include
-        # a snippet so a real failure (as opposed to the empty-transcript
-        # case handled by empty_meeting_documents() below, or the repairable
-        # backslash-escape case handled above) is diagnosable.
+        # a snippet so a real failure is diagnosable.
         snippet = text[:200]
         raise ValueError(
             f"Gemini returned invalid JSON ({exc}, finish_reason={finish_reason}): {snippet!r}"
@@ -113,34 +120,33 @@ def _generate_json(
 
 
 def extract_meeting_facts(transcript_text: str) -> dict:
-    return _generate_json(EXTRACT_SYSTEM_PROMPT, EXTRACT_RESPONSE_SCHEMA, transcript_text, max_output_tokens=4096)
+    # 8192, not the old 4096 -- the extraction schema now includes requirements,
+    # risks, assumptions, dependencies, open_questions, commitments, and an
+    # optional business_process object, which won't reliably fit in the old
+    # budget for a real meeting. The MAX_TOKENS retry-and-double logic in
+    # _generate_json() is the safety net either way.
+    return _generate_json(EXTRACT_SYSTEM_PROMPT, EXTRACT_RESPONSE_SCHEMA, transcript_text, max_output_tokens=8192)
 
 
-def empty_meeting_documents(meeting_title: str, meeting_date: str = "") -> dict:
-    """Same return shape as generate_documents(), for a meeting with no
-    transcribed speech at all (e.g. a short test call where nobody spoke).
-
-    Calling Gemini with an essentially empty transcript is what caused a
-    real crash -- confirmed in production, the model's response wasn't
-    valid JSON (json.loads raised "Unterminated string starting at: line 1
-    column 82"), most likely because there was nothing for it to summarize.
-    Skipping the call entirely for this case is both correctness (a
-    "no speech captured" note is a truthful, useful document) and avoids
-    burning Gemini quota on a call that can't produce anything meaningful
-    anyway.
+def empty_meeting_facts() -> dict:
+    """Same shape extract_meeting_facts() would return, for a meeting with no
+    transcribed speech at all -- used instead of calling Gemini with an essentially
+    empty transcript, which is a confirmed-in-production crash (the model's response
+    wasn't valid JSON, most likely because there was nothing to extract).
     """
-    note = "No speech was captured during this meeting, so there is nothing to summarize."
-    heading_suffix = f" ({meeting_date})" if meeting_date else ""
     return {
-        "facts": {},
-        "mom": {
-            "title": "Minutes of Meeting",
-            "markdown_body": f"# Minutes of Meeting — {meeting_title}{heading_suffix}\n\n{note}\n",
-        },
-        "meeting_analysis": {
-            "title": "Meeting Analysis",
-            "markdown_body": f"# Meeting Analysis — {meeting_title}{heading_suffix}\n\n{note}\n",
-        },
+        "attendees": [],
+        "topics_discussed": [],
+        "decisions": [],
+        "action_items": [],
+        "key_quotes": [],
+        "requirements": [],
+        "risks": [],
+        "assumptions": [],
+        "dependencies": [],
+        "open_questions": [],
+        "commitments": [],
+        "business_process": None,
     }
 
 
@@ -167,6 +173,7 @@ def _generate_document(
     attendees: list[str],
     facts: dict,
     transcript_text: str,
+    max_output_tokens: int = 8192,
 ) -> dict:
     grounding = {
         "meeting_title": meeting_title,
@@ -180,77 +187,184 @@ def _generate_document(
         f"EXTRACTED FACTS:\n{json.dumps(grounding, indent=2)}\n\n"
         f"FULL TRANSCRIPT:\n{transcript_text}"
     )
-    result = _generate_json(system_prompt, response_schema, user_content, max_output_tokens=8192)
+    result = _generate_json(system_prompt, response_schema, user_content, max_output_tokens=max_output_tokens)
     if isinstance(result.get("markdown_body"), str):
         result["markdown_body"] = _normalize_literal_newlines(result["markdown_body"])
     return result
 
 
-def generate_documents(
-    meeting_title: str,
-    transcript_text: str,
-    attendees: Optional[list[str]] = None,
-    meeting_date: str = "",
-    recorder: Optional[TimingRecorder] = None,
-    on_document_ready: Optional[Callable[[str, dict], None]] = None,
-) -> dict:
-    """Two-call pattern: Call 1 extracts structured facts (forced JSON
-    schema), Call 2 runs twice (forced JSON schema each) to write MOM and
-    the Meeting Analysis doc -- each grounded only in Call 1's facts + the
-    transcript, so the two are independent of each other and run
-    concurrently (network-bound Gemini calls release the GIL, so real
-    threads pay off here without needing an asyncio rewrite).
-
-    `on_document_ready`, if given, is called as `(key, doc)` -- key being
-    "mom" or "meeting_analysis" -- the moment *that one* finishes, in
-    whichever order they actually complete, rather than making the caller
-    wait for both before it can do anything with either. Lets a caller
-    (see app/orchestrator_streaming.py) render/save/serve one document
-    while the other is still generating, instead of both-or-nothing.
-
-    Phase 1 (sharing with BA testers): the Requirement Gathering Sheet and
-    Action Points generators are intentionally not called here -- their
-    prompts/schemas still live in generate_prompt.py, so re-enabling them
-    later is a small addition here, not a rewrite.
-
-    `attendees` should be the deterministic roster+spoken-names union from
-    app.pipeline.roster.compute_attendees() -- the authoritative Attendees
-    field, not left for Gemini to infer from who spoke. `meeting_date`
-    should be app.pipeline.merge.format_meeting_date()'s output -- the real
-    run timestamp, not left for Gemini to guess/extract from the transcript.
-    """
-    attendees = attendees or []
+def _timed_generate_document(recorder: Optional[TimingRecorder], stage: str, *args, **kwargs) -> dict:
     if recorder is None:
-        facts = extract_meeting_facts(transcript_text)
-    else:
-        with timed(recorder, "extract_facts"):
-            facts = extract_meeting_facts(transcript_text)
+        return _generate_document(*args, **kwargs)
+    with timed(recorder, stage):
+        return _generate_document(*args, **kwargs)
 
-    def _generate(stage: str, system_prompt, schema):
-        if recorder is None:
-            return _generate_document(
-                system_prompt, schema, meeting_title, meeting_date, attendees, facts, transcript_text
-            )
-        with timed(recorder, stage):
-            return _generate_document(
-                system_prompt, schema, meeting_title, meeting_date, attendees, facts, transcript_text
-            )
 
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        mom_future = pool.submit(_generate, "generate_mom", MOM_SYSTEM_PROMPT, MOM_RESPONSE_SCHEMA)
-        analysis_future = pool.submit(
-            _generate, "generate_meeting_analysis", MEETING_ANALYSIS_SYSTEM_PROMPT, MEETING_ANALYSIS_RESPONSE_SCHEMA
-        )
-        future_keys = {mom_future: "mom", analysis_future: "meeting_analysis"}
-        results: dict[str, dict] = {}
-        for future in as_completed(future_keys):
-            key = future_keys[future]
-            results[key] = future.result()
-            if on_document_ready is not None:
-                on_document_ready(key, results[key])
+def _placeholder_doc(title: str, meeting_title: str, meeting_date: str, note: str) -> dict:
+    heading_suffix = f" ({meeting_date})" if meeting_date else ""
+    return {"title": title, "markdown_body": f"# {title} — {meeting_title}{heading_suffix}\n\n{note}\n"}
 
+
+_NO_SPEECH_NOTE = "No speech was captured during this meeting, so there is nothing to summarize."
+_NO_REQUIREMENTS_NOTE = "No requirements were extracted from this meeting, so there is nothing to generate."
+
+# Every generator below shares this signature, even the ones that ignore most of it
+# (FRD/Business Process Flow are local, zero-Gemini-call renders of `facts` only) --
+# a uniform signature is what lets app/docgen/registry.py dispatch to any of them the
+# same way, from one on-demand "Generate" click (see app/main.py's
+# /meetings/{run_id}/documents/{doc_key}/generate route).
+
+
+def generate_mom(
+    meeting_title: str,
+    meeting_date: str,
+    attendees: list[str],
+    facts: dict,
+    transcript_text: str,
+    recorder: Optional[TimingRecorder] = None,
+) -> dict:
+    if not transcript_text.strip():
+        return {"mom": _placeholder_doc("Minutes of Meeting", meeting_title, meeting_date, _NO_SPEECH_NOTE)}
+    doc = _timed_generate_document(
+        recorder,
+        "generate_mom",
+        MOM_SYSTEM_PROMPT,
+        MOM_RESPONSE_SCHEMA,
+        meeting_title,
+        meeting_date,
+        attendees,
+        facts,
+        transcript_text,
+    )
+    return {"mom": doc}
+
+
+def generate_meeting_analysis(
+    meeting_title: str,
+    meeting_date: str,
+    attendees: list[str],
+    facts: dict,
+    transcript_text: str,
+    recorder: Optional[TimingRecorder] = None,
+) -> dict:
+    if not transcript_text.strip():
+        return {"meeting_analysis": _placeholder_doc("Meeting Analysis", meeting_title, meeting_date, _NO_SPEECH_NOTE)}
+    doc = _timed_generate_document(
+        recorder,
+        "generate_meeting_analysis",
+        MEETING_ANALYSIS_SYSTEM_PROMPT,
+        MEETING_ANALYSIS_RESPONSE_SCHEMA,
+        meeting_title,
+        meeting_date,
+        attendees,
+        facts,
+        transcript_text,
+    )
+    return {"meeting_analysis": doc}
+
+
+def generate_brd(
+    meeting_title: str,
+    meeting_date: str,
+    attendees: list[str],
+    facts: dict,
+    transcript_text: str,
+    recorder: Optional[TimingRecorder] = None,
+) -> dict:
+    if not transcript_text.strip():
+        return {"brd": _placeholder_doc("Business Requirements Document (BRD)", meeting_title, meeting_date, _NO_SPEECH_NOTE)}
+    doc = _timed_generate_document(
+        recorder,
+        "generate_brd",
+        BRD_SYSTEM_PROMPT,
+        BRD_RESPONSE_SCHEMA,
+        meeting_title,
+        meeting_date,
+        attendees,
+        facts,
+        transcript_text,
+    )
+    return {"brd": doc}
+
+
+def generate_frd(
+    meeting_title: str,
+    meeting_date: str,
+    attendees: list[str],
+    facts: dict,
+    transcript_text: str,
+    recorder: Optional[TimingRecorder] = None,
+) -> dict:
+    """Zero-Gemini-call, deterministic render of facts["requirements"] -- see
+    app/docgen/render_tables.py. Same tier as generate_business_process_flow().
+    """
+    requirements = facts.get("requirements") or []
+    title = "Functional Requirements Document (FRD)"
+    if not requirements:
+        return {"frd": _placeholder_doc(title, meeting_title, meeting_date, _NO_REQUIREMENTS_NOTE)}
+    markdown_body = render_frd_markdown(title, requirements)
+    return {"frd": {"title": title, "markdown_body": markdown_body}}
+
+
+def generate_user_stories_and_acceptance_criteria(
+    meeting_title: str,
+    meeting_date: str,
+    attendees: list[str],
+    facts: dict,
+    transcript_text: str,
+    recorder: Optional[TimingRecorder] = None,
+) -> dict:
+    """One shared Gemini call producing both User Stories and Acceptance Criteria --
+    see app/docgen/generate_prompt.py's STORIES_AND_ACCEPTANCE_CRITERIA_* -- rendered
+    into two separate documents by two small renderers reading the same `stories`
+    list, so requesting either one only ever costs one Gemini call.
+    """
+    requirements = facts.get("requirements") or []
+    if not requirements:
+        return {
+            "user_stories": _placeholder_doc("User Stories", meeting_title, meeting_date, _NO_REQUIREMENTS_NOTE),
+            "acceptance_criteria": _placeholder_doc(
+                "Acceptance Criteria", meeting_title, meeting_date, _NO_REQUIREMENTS_NOTE
+            ),
+        }
+    result = _timed_generate_document(
+        recorder,
+        "generate_stories_and_ac",
+        STORIES_AND_ACCEPTANCE_CRITERIA_SYSTEM_PROMPT,
+        STORIES_AND_ACCEPTANCE_CRITERIA_RESPONSE_SCHEMA,
+        meeting_title,
+        meeting_date,
+        attendees,
+        facts,
+        transcript_text,
+    )
+    stories = result.get("stories") or []
     return {
-        "facts": facts,
-        "mom": results["mom"],
-        "meeting_analysis": results["meeting_analysis"],
+        "user_stories": {"title": "User Stories", "markdown_body": render_user_stories_markdown("User Stories", stories)},
+        "acceptance_criteria": {
+            "title": "Acceptance Criteria",
+            "markdown_body": render_acceptance_criteria_markdown("Acceptance Criteria", stories),
+        },
     }
+
+
+def generate_business_process_flow(
+    meeting_title: str,
+    meeting_date: str,
+    attendees: list[str],
+    facts: dict,
+    transcript_text: str,
+    recorder: Optional[TimingRecorder] = None,
+) -> Optional[dict]:
+    """Zero-Gemini-call, deterministic render of facts["business_process"] into a
+    Mermaid flowchart -- see app/docgen/render_diagram.py. Returns None (not
+    generatable) when no business-process walkthrough was extracted from this
+    meeting, rather than rendering an empty/meaningless diagram.
+    """
+    business_process = facts.get("business_process")
+    steps = (business_process or {}).get("steps") or []
+    if not business_process or not steps:
+        return None
+    process_name = business_process.get("process_name") or meeting_title
+    mermaid_source = render_business_process_mermaid(process_name, steps)
+    return {"business_process_flow": {"mermaid_source": mermaid_source}}

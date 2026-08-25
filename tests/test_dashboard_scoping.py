@@ -18,13 +18,14 @@ client = TestClient(app)
 def test_dashboard_with_name_scopes_runs_and_hides_the_usage_table(monkeypatch):
     calls = []
 
-    def fake_list_runs(user_name=None):
+    def fake_list_runs(user_name=None, client_name=None):
         calls.append(user_name)
         return []
 
     called_usage_summary = []
     monkeypatch.setattr(db, "list_runs", fake_list_runs)
     monkeypatch.setattr(db, "usage_summary", lambda: called_usage_summary.append(1) or [])
+    monkeypatch.setattr(db, "distinct_client_names", lambda user_name=None: [])
 
     response = client.get("/", params={"name": "Priya Shah"})
 

@@ -40,32 +40,20 @@ def test_legacy_whole_file_path_has_no_recorded_signal():
     assert progress["recorded"] is None
 
 
-def test_generating_docs_label_lists_pending_documents():
-    progress = describe_progress("generating_docs", timing={"extract_facts": 2.0, "generate_mom": 5.0})
+def test_extracting_facts_label_is_shown():
+    # No document (MOM, BRD, ...) generates automatically anymore -- the only
+    # automatic post-meeting stage is fact extraction, so the label reflects
+    # that directly rather than listing pending documents.
+    progress = describe_progress("extracting_facts", timing={})
 
-    assert "Meeting Analysis" in progress["label"]
-    assert "MOM" not in progress["label"]
-
-
-def test_generating_docs_label_when_both_generated():
-    progress = describe_progress(
-        "generating_docs",
-        timing={
-            "extract_facts": 2.0,
-            "generate_mom": 5.0,
-            "generate_meeting_analysis": 5.0,
-        },
-    )
-
-    assert progress["label"] == "Finishing document generation..."
+    assert "requirements" in progress["label"].lower()
 
 
 def test_tail_percent_counts_completed_stages():
-    timing = {"extract_facts": 1.0, "generate_mom": 1.0}  # 2 of 8 tail stages
-
-    progress = describe_progress("generating_docs", timing=timing)
-
-    assert progress["percent"] == round(100 * 2 / len(TAIL_STAGE_KEYS))
+    # TAIL_STAGE_KEYS is just ["extract_facts"] now -- document generation is
+    # on-demand (see app/docgen/registry.py), not part of this run's bounded tail.
+    assert describe_progress("extracting_facts", timing={})["percent"] == 0
+    assert describe_progress("extracting_facts", timing={"extract_facts": 1.0})["percent"] == 100
 
 
 def test_saved_state_is_100_percent_and_completed_with_folder():
@@ -112,10 +100,10 @@ def test_status_hides_internal_states_behind_simple_labels():
 
 
 def test_eta_requires_history_for_every_remaining_stage():
-    timing = {"extract_facts": 1.0}  # 4 tail stages still remaining
-    history = {"generate_mom": {"count": 3, "mean": 4.0}}  # only 1 of the 4 known
+    timing = {}  # extract_facts (the only tail stage) still remaining
+    history = {"some_other_stage": {"count": 3, "mean": 4.0}}  # doesn't cover it
 
-    progress = describe_progress("generating_docs", timing=timing, history=history)
+    progress = describe_progress("extracting_facts", timing=timing, history=history)
 
     assert progress["eta_seconds"] is None
 

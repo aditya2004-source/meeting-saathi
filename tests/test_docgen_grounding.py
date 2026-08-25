@@ -6,6 +6,12 @@ content. Both are now passed in explicitly and must appear in the request
 Gemini actually receives -- verified here without a real Gemini call by
 patching _client.models.generate_content, same pattern as
 test_docgen_max_tokens_retry.py.
+
+Document generation is on-demand now (see app/docgen/registry.py) -- each
+document type has its own generator function (generate_mom(), generate_brd(),
+...), all sharing the same (meeting_title, meeting_date, attendees, facts,
+transcript_text) signature, called individually rather than through one bulk
+generate_documents() call.
 """
 import json
 from types import SimpleNamespace
@@ -13,88 +19,134 @@ from unittest.mock import patch
 
 from google.genai import types
 
-from app.docgen.engine import generate_documents
+from app.docgen import engine
 
 
 def _fake_response(payload: dict):
     return SimpleNamespace(text=json.dumps(payload), candidates=[SimpleNamespace(finish_reason=types.FinishReason.STOP)])
 
 
-def test_generate_documents_threads_attendees_and_date_into_grounding():
-    extract_response = _fake_response(
-        {"attendees": ["Priya Shah"], "topics_discussed": [], "decisions": [], "action_items": [], "key_quotes": []}
-    )
+def test_generate_mom_threads_attendees_and_date_into_grounding():
     mom_response = _fake_response({"title": "Minutes of Meeting", "markdown_body": "body"})
-    analysis_response = _fake_response({"title": "Meeting Analysis", "markdown_body": "body"})
 
-    with patch(
-        "app.docgen.engine._client.models.generate_content",
-        side_effect=[extract_response, mom_response, analysis_response],
-    ) as mock_call:
-        generate_documents(
+    with patch("app.docgen.engine._client.models.generate_content", return_value=mom_response) as mock_call:
+        engine.generate_mom(
             "Weekly Sync",
+            "28 July 2026, 2:30 PM IST",
+            ["Priya Shah", "Silent Person"],
+            {"topics_discussed": []},
             "[00:00:00] Priya Shah: hi",
-            attendees=["Priya Shah", "Silent Person"],
-            meeting_date="28 July 2026, 2:30 PM IST",
         )
 
-    # First call is the extraction step (no attendees/meeting_date grounding
-    # -- those are only added at the document-generation step); the
-    # remaining two (MOM/Meeting Analysis, order not guaranteed since they
-    # run concurrently) must each carry the real roster and date verbatim.
-    doc_calls = mock_call.call_args_list[1:]
-    assert len(doc_calls) == 2
-    for call in doc_calls:
-        contents = call.kwargs["contents"]
-        assert "Priya Shah" in contents
-        assert "Silent Person" in contents
-        assert "28 July 2026, 2:30 PM IST" in contents
+    contents = mock_call.call_args.kwargs["contents"]
+    assert "Priya Shah" in contents
+    assert "Silent Person" in contents
+    assert "28 July 2026, 2:30 PM IST" in contents
 
 
-def test_generate_documents_calls_on_document_ready_for_each_document():
-    # Lets a caller (app/orchestrator_streaming.py) render/save one
-    # document the moment it's ready instead of waiting for both.
-    extract_response = _fake_response(
-        {"attendees": [], "topics_discussed": [], "decisions": [], "action_items": [], "key_quotes": []}
-    )
-    mom_response = _fake_response({"title": "Minutes of Meeting", "markdown_body": "mom body"})
-    analysis_response = _fake_response({"title": "Meeting Analysis", "markdown_body": "analysis body"})
+def test_generate_brd_threads_attendees_and_date_into_grounding():
+    brd_response = _fake_response({"title": "BRD", "markdown_body": "body"})
 
-    ready_calls = []
-
-    with patch(
-        "app.docgen.engine._client.models.generate_content",
-        side_effect=[extract_response, mom_response, analysis_response],
-    ):
-        result = generate_documents(
+    with patch("app.docgen.engine._client.models.generate_content", return_value=brd_response) as mock_call:
+        engine.generate_brd(
             "Weekly Sync",
+            "28 July 2026, 2:30 PM IST",
+            ["Priya Shah"],
+            {"requirements": [{"id": "REQ-1", "statement": "x", "category": "functional", "status": "clear"}]},
             "[00:00:00] Priya Shah: hi",
-            on_document_ready=lambda key, doc: ready_calls.append((key, doc["markdown_body"])),
         )
 
-    assert set(k for k, _ in ready_calls) == {"mom", "meeting_analysis"}
-    assert ("mom", "mom body") in ready_calls
-    assert ("meeting_analysis", "analysis body") in ready_calls
-    # The returned dict is unaffected by the callback -- still the same
-    # both-documents shape as before.
-    assert result["mom"]["markdown_body"] == "mom body"
-    assert result["meeting_analysis"]["markdown_body"] == "analysis body"
+    contents = mock_call.call_args.kwargs["contents"]
+    assert "Priya Shah" in contents
+    assert "28 July 2026, 2:30 PM IST" in contents
 
 
-def test_generate_documents_defaults_to_empty_attendees_when_not_provided():
-    extract_response = _fake_response(
-        {"attendees": [], "topics_discussed": [], "decisions": [], "action_items": [], "key_quotes": []}
+def test_generate_mom_skips_gemini_and_returns_placeholder_for_empty_transcript():
+    with patch("app.docgen.engine._client.models.generate_content") as mock_call:
+        result = engine.generate_mom("Weekly Sync", "", [], {}, "")
+
+    mock_call.assert_not_called()
+    assert "No speech was captured" in result["mom"]["markdown_body"]
+
+
+def test_generate_user_stories_and_acceptance_criteria_shares_one_call():
+    stories_response = _fake_response(
+        {
+            "stories": [
+                {
+                    "requirement_id": "REQ-1",
+                    "as_a": "Sales Rep",
+                    "i_want": "to submit an order",
+                    "so_that": "the customer gets their goods",
+                    "priority": "high",
+                    "acceptance_criteria": ["Order saved to DB"],
+                }
+            ]
+        }
     )
-    doc_response = _fake_response({"title": "t", "markdown_body": "b"})
 
-    with patch(
-        "app.docgen.engine._client.models.generate_content",
-        side_effect=[extract_response, doc_response, doc_response],
-    ) as mock_call:
-        generate_documents("Weekly Sync", "[00:00:00] Priya Shah: hi")
+    with patch("app.docgen.engine._client.models.generate_content", return_value=stories_response) as mock_call:
+        result = engine.generate_user_stories_and_acceptance_criteria(
+            "Weekly Sync",
+            "28 July 2026, 2:30 PM IST",
+            ["Priya Shah"],
+            {"requirements": [{"id": "REQ-1", "statement": "x", "category": "functional", "status": "clear"}]},
+            "[00:00:00] Priya Shah: hi",
+        )
 
-    doc_calls = mock_call.call_args_list[1:]
-    for call in doc_calls:
-        contents = call.kwargs["contents"]
-        assert '"attendees": []' in contents
-        assert '"meeting_date": ""' in contents
+    mock_call.assert_called_once()  # one Gemini call produces BOTH documents
+    assert set(result.keys()) == {"user_stories", "acceptance_criteria"}
+    assert "Sales Rep" in result["user_stories"]["markdown_body"]
+    assert "Order saved to DB" in result["acceptance_criteria"]["markdown_body"]
+
+
+def test_generate_user_stories_and_acceptance_criteria_skips_gemini_when_no_requirements():
+    with patch("app.docgen.engine._client.models.generate_content") as mock_call:
+        result = engine.generate_user_stories_and_acceptance_criteria(
+            "Weekly Sync", "", [], {"requirements": []}, "[00:00:00] Priya Shah: hi"
+        )
+
+    mock_call.assert_not_called()
+    assert "No requirements were extracted" in result["user_stories"]["markdown_body"]
+    assert "No requirements were extracted" in result["acceptance_criteria"]["markdown_body"]
+
+
+def test_generate_frd_never_calls_gemini():
+    with patch("app.docgen.engine._client.models.generate_content") as mock_call:
+        result = engine.generate_frd(
+            "Weekly Sync",
+            "",
+            [],
+            {"requirements": [{"id": "REQ-1", "statement": "x", "category": "functional", "status": "clear"}]},
+            "[00:00:00] Priya Shah: hi",
+        )
+
+    mock_call.assert_not_called()
+    assert "REQ-1" in result["frd"]["markdown_body"]
+
+
+def test_generate_business_process_flow_never_calls_gemini_and_returns_none_when_no_process():
+    with patch("app.docgen.engine._client.models.generate_content") as mock_call:
+        result = engine.generate_business_process_flow("Weekly Sync", "", [], {"business_process": None}, "text")
+
+    mock_call.assert_not_called()
+    assert result is None
+
+
+def test_generate_business_process_flow_renders_from_facts():
+    facts = {
+        "business_process": {
+            "process_name": "Order Approval",
+            "steps": [
+                {"id": "STEP-1", "type": "start", "description": "Order submitted", "status": "clear", "next_step_id": "STEP-2"},
+                {"id": "STEP-2", "type": "end", "description": "Order approved", "status": "clear"},
+            ],
+        }
+    }
+
+    with patch("app.docgen.engine._client.models.generate_content") as mock_call:
+        result = engine.generate_business_process_flow("Weekly Sync", "", [], facts, "text")
+
+    mock_call.assert_not_called()
+    assert "flowchart TD" in result["business_process_flow"]["mermaid_source"]
+    assert "Order submitted" in result["business_process_flow"]["mermaid_source"]

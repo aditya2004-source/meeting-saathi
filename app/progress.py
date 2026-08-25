@@ -7,12 +7,15 @@ this is trivially unit-testable and reusable by both the `/` status page
 and the `/meetings/{id}/status` JSON endpoint.
 
 Design choices worth calling out:
-- A percent/ETA is only ever given for the *bounded* post-meeting tail
-  (extract facts -> generate+render+write MOM and Meeting Analysis, each
-  document rendered and written to its final folder as soon as its own
-  Gemini call completes -- see app.orchestrator_streaming.finalize_run() --
-  rather than waiting for both before either is written). While a meeting
-  is still being recorded (chunk_processing, or legacy
+- A percent/ETA is only ever given for the *bounded* post-meeting tail, which
+  is now just one stage: extracting structured facts (see
+  app.orchestrator_streaming.finalize_run()). No document (MOM, BRD, ...) is
+  generated automatically anymore -- those are on-demand from the dashboard
+  (see app.docgen.registry), so they're intentionally NOT part of this run's
+  progress bar/ETA; their own generate/ready status is tracked separately
+  (app.main.py's /meetings/{run_id}/documents route), computed from the
+  meeting folder's filesystem contents, not this run's DB state.
+- While a meeting is still being recorded (chunk_processing, or legacy
   transcribing/diarizing), duration is fundamentally open-ended -- a
   fabricated countdown there would be actively misleading, so this
   deliberately shows no percent/ETA at all in that phase, only a live
@@ -21,52 +24,40 @@ Design choices worth calling out:
   remaining tail stage. Treating a not-yet-seen stage as "0s" would silently
   understate the true remaining time, which is worse than showing nothing.
 - `folder_path` is surfaced regardless of terminal state (not gated on
-  state == "saved") -- the folder now exists and can hold individual
-  finished documents well before the run is fully "saved"; app.main.py
-  separately computes *which* files are actually present yet
-  (`available_files`) so the dashboard can offer a document for download
-  the moment it exists, without waiting for its sibling.
+  state == "saved") -- the folder exists (holding transcript.json/facts.json,
+  and whichever documents have been generated on-demand since) well before
+  some callers might expect; app.main.py separately computes *which* files
+  are actually present yet.
 """
 from typing import Optional
 
-# Timing.json keys that make up the bounded post-meeting tail. extract_facts
-# always finishes first; the two generate_*/render_*_pdf pairs after that
-# each complete independently, in whichever order their Gemini call actually
-# finishes (see app.docgen.engine.generate_documents()'s on_document_ready
-# callback) -- there's no longer a single final "save" stage, since each
-# document is written to its final folder as it's rendered, not batched at
-# the end. Shared with orchestrator.py/orchestrator_streaming.py, which use
-# this same list to decide which of TimingRecorder's keys are worth folding
-# into the persisted cross-run history
-# (app.pipeline.timing.record_stage_durations) -- chunk_transcribe/
-# chunk_pyannote/etc. aren't part of the bounded tail and are intentionally
-# excluded from that history.
-TAIL_STAGE_KEYS = [
-    "extract_facts",
-    "generate_mom",
-    "generate_meeting_analysis",
-    "render_mom_pdf",
-    "render_meeting_analysis_pdf",
-]
-
-_GENERATE_STAGE_LABELS = [
-    ("generate_mom", "MOM"),
-    ("generate_meeting_analysis", "Meeting Analysis"),
-]
+# Timing.json keys that make up the bounded post-meeting tail -- just fact
+# extraction now that document generation is on-demand (see module docstring).
+# Shared with orchestrator.py/orchestrator_streaming.py, which use this same
+# list to decide which of TimingRecorder's keys are worth folding into the
+# persisted cross-run history (app.pipeline.timing.record_stage_durations) --
+# chunk_transcribe/chunk_pyannote/etc. aren't part of the bounded tail and are
+# intentionally excluded from that history.
+TAIL_STAGE_KEYS = ["extract_facts"]
 
 _STATE_LABELS = {
     "idle": "Waiting to start...",
     "received": "Recording received, starting up...",
     "transcribing": "Transcribing...",
     "diarizing": "Diarizing speakers...",
-    "rendering": "Rendering PDFs...",
-    "saving": "Saving files...",
+    "extracting_facts": "Extracting requirements, decisions, and other structured facts...",
+    # Kept only so a historical row already in one of these states (from
+    # before document generation became on-demand) still renders a sane
+    # label if it's ever loaded -- no current code writes them.
+    "generating_docs": "Finishing up...",
+    "rendering": "Finishing up...",
+    "saving": "Finishing up...",
     "saved": "Completed",
     "failed": "Failed",
 }
 
 _LIVE_STATES = {"received", "chunk_processing", "transcribing", "diarizing"}
-_TAIL_STATES = {"generating_docs", "rendering", "saving"}
+_TAIL_STATES = {"extracting_facts", "generating_docs", "rendering", "saving"}
 
 # A coarse, always-simple category for the status badge -- deliberately NOT
 # the raw DB state string (e.g. "chunk_processing", "generating_docs"),
@@ -79,21 +70,13 @@ _SIMPLE_STATUS = {
     "chunk_processing": "Recording",
     "transcribing": "Recording",
     "diarizing": "Recording",
+    "extracting_facts": "Processing",
     "generating_docs": "Processing",
     "rendering": "Processing",
     "saving": "Processing",
     "saved": "Completed",
     "failed": "Failed",
 }
-
-
-def _generating_docs_label(timing: dict) -> str:
-    pending = [name for key, name in _GENERATE_STAGE_LABELS if key not in timing]
-    if not pending:
-        return "Finishing document generation..."
-    if len(pending) == len(_GENERATE_STAGE_LABELS):
-        return "Generating MOM & Meeting Analysis..."
-    return "Generating " + ", ".join(pending) + "..."
 
 
 def _chunk_processing_label(chunk_durations: Optional[dict]) -> str:
@@ -104,8 +87,6 @@ def _chunk_processing_label(chunk_durations: Optional[dict]) -> str:
 
 
 def _stage_label(state: str, timing: dict, chunk_durations: Optional[dict]) -> str:
-    if state == "generating_docs":
-        return _generating_docs_label(timing)
     if state == "chunk_processing":
         return _chunk_processing_label(chunk_durations)
     return _STATE_LABELS.get(state, state)

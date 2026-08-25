@@ -37,8 +37,14 @@ is a separate trio, additive alongside the two routes above, backed by
   chunk never blocks the next chunk's upload from being accepted.
 - `POST /meetings/{run_id}/finalize` — same shape as `/chunk`, for the
   terminal (usually short) chunk when the meeting ends. Once that chunk
-  and everything still in flight finishes, the run proceeds through the
-  same docgen → render → save tail the legacy path uses.
+  and everything still in flight finishes, the run assembles
+  `transcript.json`, extracts structured facts (`facts.json`), and reaches
+  `state="saved"` -- the same tail the legacy path uses. **No document (MOM,
+  BRD, FRD, ...) is generated automatically anymore** -- see
+  `docgen/DESIGN.md`'s "On-demand document generation" section. A new
+  `POST /meetings/{run_id}/documents/{doc_key}/generate` route (below)
+  triggers one document (or shared group) at a time, only when the user
+  explicitly asks for it from the dashboard.
 
 CORS is wide open (`allow_origins=["*"]`) because the extension runs as a
 `chrome-extension://...` origin, not a normal web origin — it needs to be
@@ -47,7 +53,22 @@ anything but `127.0.0.1`.
 
 Each upload (whole-file or chunk) spawns a background `threading.Thread` —
 a meeting recording can be an hour+ of processing, which must never block
-the web server's event loop.
+the web server's event loop. `POST /meetings/{run_id}/documents/{doc_key}/generate`
+follows the same pattern: it validates `doc_key` against
+`docgen/registry.py`, spawns a background thread to actually run the Gemini
+call (or, for a "local" group like FRD/Business Process Flow, the
+zero-Gemini-call deterministic render), and returns immediately — the
+dashboard polls `GET /meetings/{run_id}/status` (now also carrying a
+per-document `progress.documents` catalogue) the same way it already polls
+for everything else. In-flight generation state (which group is currently
+running, and any error from its last attempt) lives in
+`app/document_generation_state.py` — same in-memory, lock-guarded, v1-scoped
+pattern as `chunked_state.py`, not a DB column.
+
+`POST /meetings/{run_id}/client` lets a client/project name be attached (or
+corrected) after the fact — most real meetings start automatically without
+the extension popup ever opening, so this is the primary way a client name
+actually gets set, not just a fallback for the popup's own optional field.
 
 ## Live processing status (`app/progress.py` + `status.js`)
 
@@ -65,17 +86,22 @@ Both `GET /` (`index()`) and `GET /meetings/{run_id}/status` call the same
 every subsequent poll are always built from identical logic.
 
 A deliberate scope decision: **percent/ETA are only ever shown for the
-bounded post-meeting tail** (extract facts → generate 3 docs → render 3
-PDFs → save). While a meeting is still live (`chunk_processing`, or the
-legacy path's `transcribing`/`diarizing`), duration is genuinely
-open-ended — a fabricated countdown there would be actively misleading.
-Instead, that phase shows a live "how much audio has been captured so far"
-signal computed straight from `chunk_durations.json`, which doubles as the
-"was this meeting actually recorded" signal: `chunk_durations` empty/absent
-while still live is not evidence of a problem (the first chunk just hasn't
-arrived yet), but empty/absent *after* the meeting has ended
-(`generating_docs` or later) is a real, actionable "no audio was captured"
-signal, surfaced as a warning on the status page.
+bounded post-meeting tail**, which is now just fact extraction
+(`extracting_facts` state) — no document generates automatically anymore
+(see `docgen/DESIGN.md`), so document generation is deliberately *not* part
+of this run-level progress bar/ETA; each document's own generate/ready
+status is a separate per-document catalogue (`progress.documents`, computed
+by `main.py`'s `_document_statuses()`) that the dashboard renders as a
+"Generate" button per document type. While a meeting is still live
+(`chunk_processing`, or the legacy path's `transcribing`/`diarizing`),
+duration is genuinely open-ended — a fabricated countdown there would be
+actively misleading. Instead, that phase shows a live "how much audio has
+been captured so far" signal computed straight from `chunk_durations.json`,
+which doubles as the "was this meeting actually recorded" signal:
+`chunk_durations` empty/absent while still live is not evidence of a
+problem (the first chunk just hasn't arrived yet), but empty/absent *after*
+the meeting has ended (`extracting_facts` or later) is a real, actionable
+"no audio was captured" signal, surfaced as a warning on the status page.
 
 `GET /meetings/{run_id}/status` already existed before this feature and
 already returned live `timing.json` data — the actual gap was that nothing
@@ -93,19 +119,20 @@ mostly there, was the clearly better fit.
 ## `orchestrator.py` — the legacy whole-file pipeline driver
 
 `_run()` is a straight-line sequence: diarize → (optionally) resolve
-speaker names → merge → generate documents → render PDFs → save →
-clean up the working directory. `process_recording()` wraps the whole
-thing in a top-level `try/except` that calls `db.mark_failed()` on any
+speaker names → merge → extract structured facts → save (`facts.json` +
+`transcript.json`) → clean up the working directory. No document is
+generated here — see `docgen/DESIGN.md`. `process_recording()` wraps the
+whole thing in a top-level `try/except` that calls `db.mark_failed()` on any
 exception — a single bad meeting must never crash the server or take down
 other runs; a `failed` state with the exception message visible on the
 status page is the intended failure mode, not an unhandled 500.
 
 ## `orchestrator_streaming.py` — the chunked pipeline driver
 
-Sibling to `orchestrator.py`, not a replacement — shares `merge.py`,
-`docgen/engine.py`, `docgen/render_pdf.py`, and `storage.py` completely
-unchanged; only transcript *assembly* differs (accumulated per-chunk
-`SpeakerSegment`s here, vs. one whole-file `diarize()` call there).
+Sibling to `orchestrator.py`, not a replacement — shares `merge.py` and
+`storage.py` completely unchanged; only transcript *assembly* differs
+(accumulated per-chunk `SpeakerSegment`s here, vs. one whole-file
+`diarize()` call there).
 
 `accept_chunk()` (called from the `/chunk`/`/finalize` routes) writes the
 chunk to disk and returns immediately; the actual work
@@ -120,33 +147,40 @@ accumulation for any run not yet `saved`, same category as the
 already-documented "server must be running while recording" constraint.
 When the `/finalize` chunk's own processing completes,
 `_wait_for_pending_then_finalize()` polls until every other in-flight
-chunk for that run drains, then calls `finalize_run()` — the same
-docgen → render → save tail as the legacy path.
+chunk for that run drains, then calls `finalize_run()`, which extracts
+facts and reaches `state="saved"` — the same tail as the legacy path. No
+document generates here either; that's all on-demand (see above).
 
 ## `db.py` — state machine
 
 One row per meeting in SQLite (`data/runs.sqlite3`), see `db.STATES` for
 the full state list: `idle -> received -> transcribing -> diarizing ->
-generating_docs -> rendering -> saving -> saved`, or `failed` from
-anywhere, for the legacy path; the chunked path instead goes `idle ->
-received -> chunk_processing -> generating_docs -> rendering -> saving ->
-saved` (`chunk_processing` spans the whole in-call chunk-accumulation
-period). Adding `chunk_processing` was a plain new value in the `STATES`
-list — `update_run()`'s validation is the only place it's checked against,
-so this needed no schema change (see the migration note below).
+extracting_facts -> saved`, or `failed` from anywhere, for the legacy path;
+the chunked path instead goes `idle -> received -> chunk_processing ->
+extracting_facts -> saved` (`chunk_processing` spans the whole in-call
+chunk-accumulation period). `generating_docs`/`rendering`/`saving` remain in
+`STATES` only so a historical row already in one of those states (from
+before document generation became on-demand) still passes `update_run()`'s
+validation if it's ever touched — no current code writes them.
+`extracting_facts` was added as a plain new value the same way
+`chunk_processing` originally was — `update_run()`'s validation is the only
+place `STATES` is checked against, so this needed no schema change (see the
+migration note below).
 
 **Migration note, worth remembering before adding any column:**
 `init_db()` uses `CREATE TABLE IF NOT EXISTS`, which does **not** alter an
 already-existing table. This machine already has a populated
 `runs.sqlite3` from real use — adding a column to `_SCHEMA` alone will
 silently do nothing here, and the first `update_run(..., new_column=...)`
-call will throw `sqlite3.OperationalError: no such column`. There's no
-migration precedent in this codebase yet; any future schema change needs
-an explicit `PRAGMA table_info` → `ALTER TABLE ... ADD COLUMN` guard in
-`init_db()`, not just a `_SCHEMA` edit. (This is why, e.g., speaker-name
-resolution provenance was deliberately *not* added as a DB column — the
-transcript's `diarization_source` field plus each segment's speaker label
-are sufficient signal without touching the schema.)
+call will throw `sqlite3.OperationalError: no such column`. The established
+precedent (first used for `user_name`, now also `client_name`,
+`client_name_normalized`, and `device_id`) is a loop of
+`try: conn.execute("ALTER TABLE ... ADD COLUMN ...") except
+sqlite3.OperationalError: pass` in `init_db()` — an `OperationalError` means
+the column already exists (a fresh DB, or one already migrated). (This is
+why, e.g., speaker-name resolution provenance was deliberately *not* added
+as a DB column — the transcript's `diarization_source` field plus each
+segment's speaker label are sufficient signal without touching the schema.)
 
 ## `config.py` — settings
 

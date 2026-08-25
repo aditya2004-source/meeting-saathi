@@ -29,6 +29,7 @@ def build_transcript(
     segments: list[SpeakerSegment],
     attendees: list[str] | None = None,
     unidentified_speaker_excerpts: dict[str, str] | None = None,
+    client_name: str = "",
 ) -> dict:
     """`attendees` should be the deterministic roster+spoken-names union
     from app.pipeline.roster.compute_attendees() -- callers that don't have
@@ -37,6 +38,9 @@ def build_transcript(
     speaker labels in `segments`. `unidentified_speaker_excerpts` (from
     speaker_names.fill_unresolved_with_excerpts()) is stored only for a
     human's later reference -- never rendered into transcript_text/Gemini.
+    `client_name` (default "") makes this folder-level backup self-describing
+    even if the DB row it came from is ever lost -- optional, since not every
+    meeting has one.
     """
     if attendees is None:
         attendees = list(dict.fromkeys(s.speaker for s in segments))
@@ -47,6 +51,7 @@ def build_transcript(
         "ended_at": ended_at,
         "meeting_date_display": format_meeting_date(started_at),
         "attendees": attendees,
+        "client_name": client_name,
         "unidentified_speaker_excerpts": unidentified_speaker_excerpts or {},
         "diarization_source": "pyannote_local",
         "segments": [

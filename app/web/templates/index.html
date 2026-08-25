@@ -21,9 +21,6 @@
 
     <details class="manual-upload">
       <summary>Manually process an existing recording (testing / fallback)</summary>
-      {% if request.query_params.get('limit_reached') %}
-        <p class="muted" style="color:#c53030;">That name's daily limit is already used up for today -- try again tomorrow.</p>
-      {% endif %}
       <form method="post" action="/meetings/upload-form" enctype="multipart/form-data" class="start-form">
         <label>Your name
           <input type="text" name="user_name" placeholder="e.g. Priya Shah" required>
@@ -31,12 +28,29 @@
         <label>Meeting title
           <input type="text" name="title" placeholder="e.g. Weekly Sales Review" required>
         </label>
+        <label>Client / project <span class="muted">(optional)</span>
+          <input type="text" name="client_name" placeholder="e.g. Acme Corp">
+        </label>
         <label>Recording file (audio or video)
           <input type="file" name="audio" accept="audio/*,video/*" required>
         </label>
-        <button type="submit">Generate documents</button>
+        <button type="submit">Process recording</button>
       </form>
     </details>
+  {% endif %}
+
+  {% if client_names %}
+  <form method="get" action="" class="client-filter-form">
+    {% if viewing_name %}<input type="hidden" name="name" value="{{ viewing_name }}">{% endif %}
+    <label>Client / project
+      <select name="client" onchange="this.form.submit()">
+        <option value="">All</option>
+        {% for c in client_names %}
+          <option value="{{ c }}" {% if c == client_filter %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </label>
+  </form>
   {% endif %}
 
   {% if usage %}
@@ -63,6 +77,17 @@
 
     <div class="meeting-started">Started {{ run.started_display }}</div>
 
+    <div class="meeting-client">
+      {% if run.client_name %}
+        <span class="client-badge">{{ run.client_name }}</span>
+      {% else %}
+        <form method="post" action="/meetings/{{ run.id }}/client" class="set-client-form">
+          <input type="text" name="client_name" placeholder="Add client / project" size="20">
+          <button type="submit">Set</button>
+        </form>
+      {% endif %}
+    </div>
+
     <div class="status-label">{{ run.progress.label if run.state not in ('failed', 'saved') }}</div>
 
     <div class="progress-bar{% if run.progress.percent is none %} hidden{% endif %}">
@@ -80,18 +105,36 @@
     <div class="error status-error">{% if run.state == 'failed' and run.error_message %}{{ run.error_message }}{% endif %}</div>
 
     <div class="status-result">
-      {% if run.folder_path and run.progress.available_files %}
+      {% if run.folder_path %}
         <div class="result-box">
-          {% if run.state == 'saved' %}
-            <span class="completed-banner">&#9989; Documents ready</span>
-          {% else %}
-            <span class="completed-banner partial">&#8987; {{ run.progress.documents_ready_count }} of 2 documents ready so far</span>
+          {% if 'transcript.txt' in run.progress.available_files %}
+            <div class="download-links">
+              <a href="/meetings/{{ run.id }}/files/transcript.txt">Full transcript</a>
+            </div>
           {% endif %}
-          <div class="download-links">
-            {% if 'MOM.pdf' in run.progress.available_files %}<a href="/meetings/{{ run.id }}/files/MOM.pdf">MOM (PDF)</a>{% endif %}
-            {% if 'Meeting_Analysis.pdf' in run.progress.available_files %}<a href="/meetings/{{ run.id }}/files/Meeting_Analysis.pdf">Meeting Analysis (PDF)</a>{% endif %}
-            {% if 'transcript.txt' in run.progress.available_files %}<a href="/meetings/{{ run.id }}/files/transcript.txt">Full transcript</a>{% endif %}
+          {% if run.progress.documents %}
+          <div class="document-catalogue" data-run-id="{{ run.id }}">
+            {% for doc in run.progress.documents %}
+            <div class="document-row document-status-{{ doc.status }}" data-doc-key="{{ doc.key }}">
+              <span class="document-label">{{ doc.label }}</span>
+              <span class="document-action">
+                {% if doc.status == 'ready' %}
+                  <a href="/meetings/{{ run.id }}/files/{{ doc.pdf_filename }}">Download</a>
+                {% elif doc.status == 'generating' %}
+                  <span class="muted">Generating…</span>
+                {% elif doc.status == 'unavailable' %}
+                  <span class="muted">Not applicable to this meeting</span>
+                {% else %}
+                  <button type="button" class="generate-btn" data-run-id="{{ run.id }}" data-doc-key="{{ doc.key }}">
+                    {% if doc.status == 'failed' %}Retry{% else %}Generate{% endif %}
+                  </button>
+                  {% if doc.status == 'failed' and doc.error %}<span class="document-error">{{ doc.error }}</span>{% endif %}
+                {% endif %}
+              </span>
+            </div>
+            {% endfor %}
           </div>
+          {% endif %}
         </div>
       {% endif %}
     </div>

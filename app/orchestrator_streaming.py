@@ -4,13 +4,13 @@ self-contained audio chunks *during* the call (see extension/DESIGN.md),
 each transcribed+diarized as it arrives (diarize_chunk(), DOM-primary with
 a pyannote fallback -- see app/pipeline/diarize.py). By the time the
 meeting ends and /finalize's last short chunk is processed, the transcript
-is already assembled and only document generation + rendering + saving is
-left to do.
+is already assembled and only extracting structured facts is left to do --
+no document (MOM, BRD, ...) is generated automatically; that's all on-demand
+from the dashboard (see app/docgen/registry.py).
 
-Shares merge.py, docgen/engine.py, docgen/render_pdf.py, and storage.py
-unchanged with the legacy whole-file path in orchestrator.py -- only the
-transcript-assembly step differs (accumulated chunk segments here vs. one
-diarize() call there).
+Shares merge.py and storage.py unchanged with the legacy whole-file path in
+orchestrator.py -- only the transcript-assembly step differs (accumulated
+chunk segments here vs. one diarize() call there).
 """
 import datetime
 import json
@@ -25,7 +25,6 @@ from app import db
 from app.chunked_state import append_segments_to_disk, drop as drop_state, get_or_create
 from app.config import settings
 from app.docgen import engine as docgen_engine
-from app.docgen.render_pdf import markdown_to_pdf
 from app.pipeline.diarize import diarize_chunk, probe_duration_seconds
 from app.pipeline.download import working_dir_for
 from app.pipeline.merge import build_transcript, render_plain_text
@@ -39,17 +38,10 @@ from app.pipeline.timing import TimingRecorder, record_stage_durations, timed
 from app.progress import TAIL_STAGE_KEYS
 from app.storage import create_meeting_folder, write_meeting_file
 
-# Maps generate_documents()'s on_document_ready `key` to the (markdown,
-# pdf) filenames each document gets written under in the meeting folder.
-_DOC_FILENAMES = {
-    "mom": ("MOM.md", "MOM.pdf"),
-    "meeting_analysis": ("Meeting_Analysis.md", "Meeting_Analysis.pdf"),
-}
-
 # States a run may already be in by the time a chunk arrives without needing
 # to (re-)enter "chunk_processing" -- e.g. a late-arriving retry after
 # finalize has already moved the run further along the pipeline.
-_PAST_CHUNK_PROCESSING = {"generating_docs", "rendering", "saving", "saved", "failed"}
+_PAST_CHUNK_PROCESSING = {"extracting_facts", "generating_docs", "rendering", "saving", "saved", "failed"}
 
 # Bounded, process-wide, not one raw threading.Thread per chunk (the
 # previous design) -- confirmed in production on a real 4-core machine:
@@ -127,8 +119,8 @@ def _process_chunk_then_maybe_finalize(run_id: str, sequence: int, chunk_path: P
         # db.mark_failed(), discarding every other chunk's already-processed
         # segments even if the rest of the meeting was fine. Now this chunk
         # just contributes no segments and the run continues -- only a
-        # failure in the finalize tail below (docgen/render/save, which
-        # can't partially succeed) still fails the whole run.
+        # failure in the finalize tail below (assemble transcript/extract
+        # facts/save, which can't partially succeed) still fails the whole run.
         traceback.print_exc()
         state = get_or_create(run_id)
         with state.lock:
@@ -195,10 +187,15 @@ def _wait_for_pending_then_finalize(run_id: str, poll_interval: float = 0.2) -> 
 
 
 def finalize_run(run_id: str) -> None:
-    """Assembles the transcript from already-processed chunk segments, then
-    runs the same tail as the legacy path: docgen -> render -> save. Called
-    once every chunk (including the final short one) has finished
-    processing.
+    """Assembles the transcript from already-processed chunk segments, then runs
+    the same tail as the legacy path: extract structured facts -> save. Called
+    once every chunk (including the final short one) has finished processing.
+
+    No *document* (MOM, BRD, FRD, ...) is generated here anymore -- that's all
+    on-demand from the dashboard now (see app/docgen/registry.py and
+    app/main.py's /meetings/{run_id}/documents/{key}/generate route), reading
+    facts.json + transcript.json back from the folder this function writes. This
+    run reaches "saved" as soon as the transcript + extracted facts exist.
     """
     run = db.get_run(run_id)
     if run is None:
@@ -250,15 +247,15 @@ def finalize_run(run_id: str) -> None:
         segments=segments,
         attendees=attendees,
         unidentified_speaker_excerpts=unidentified_excerpts,
+        client_name=run.get("client_name") or "",
     )
     transcript_text = render_plain_text(transcript)
 
-    db.update_run(run_id, state="generating_docs")
+    db.update_run(run_id, state="extracting_facts")
 
     # Created and recorded on the run immediately -- not at the very end --
-    # so the folder (and whichever documents have landed in it so far) is
-    # visible to the dashboard/download route from this point on, well
-    # before document generation finishes. See app/storage.py's
+    # so the folder is visible to the dashboard/download route from this
+    # point on, well before extraction finishes. See app/storage.py's
     # create_meeting_folder()/write_meeting_file() for why this no longer
     # writes everything atomically in one shot.
     folder = create_meeting_folder(settings.base_storage_dir, run["title"], now)
@@ -272,35 +269,16 @@ def finalize_run(run_id: str) -> None:
     # playable file across chunk boundaries. Not required for this
     # redesign's scope; the durable backup remains transcript.json/.txt.
 
-    def _on_document_ready(key: str, doc: dict) -> None:
-        # Fires the moment *this one* document's Gemini call completes,
-        # independent of its sibling -- MOM can be rendered, written, and
-        # downloadable while Meeting Analysis is still generating (or vice
-        # versa), instead of both needing to finish before either is
-        # visible.
-        md_name, pdf_name = _DOC_FILENAMES[key]
-        write_meeting_file(folder, md_name, doc["markdown_body"])
-        with timed(recorder, f"render_{key}_pdf"):
-            markdown_to_pdf(doc["markdown_body"], folder / pdf_name)
-
     if segments:
-        docgen_engine.generate_documents(
-            run["title"],
-            transcript_text,
-            attendees=attendees,
-            meeting_date=transcript["meeting_date_display"],
-            recorder=recorder,
-            on_document_ready=_on_document_ready,
-        )
+        with timed(recorder, "extract_facts"):
+            facts = docgen_engine.extract_meeting_facts(transcript_text)
     else:
         # No transcribed speech at all (e.g. a short test call where nobody
         # spoke) -- confirmed in production that calling Gemini with an
         # essentially empty transcript makes it return non-JSON text,
-        # crashing json.loads(). A "nothing was said" document is both
-        # truthful and avoids that failure mode entirely.
-        docs = docgen_engine.empty_meeting_documents(run["title"], transcript["meeting_date_display"])
-        _on_document_ready("mom", docs["mom"])
-        _on_document_ready("meeting_analysis", docs["meeting_analysis"])
+        # crashing json.loads(). There's also nothing to extract from silence.
+        facts = docgen_engine.empty_meeting_facts()
+    write_meeting_file(folder, "facts.json", json.dumps(facts, indent=2))
 
     db.update_run(run_id, state="saved")
 

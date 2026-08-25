@@ -14,7 +14,10 @@ name -- they look like `Unidentified speaker 1`, `Unidentified speaker 2`, etc. 
 means their name could not be confidently identified. Copy each such label exactly as
 it appears, verbatim (including its number), every time you reference that speaker --
 never shorten it, never merge two different numbers together, and never invent a
-plausible-sounding real name to replace it. {LANGUAGE_RULE}"""
+plausible-sounding real name to replace it. An `extracted_facts.requirements` list is
+provided -- each has a stable `id` (e.g. REQ-1); reference that id wherever you cite a
+requirement, rather than re-describing it loosely, so a reader can cross-reference it
+against the FRD/User Stories. {LANGUAGE_RULE}"""
 
 _PRODUCT_GROUPING_RULE = (
     "If the meeting covers more than one distinct product/solution (e.g. a demo "
@@ -42,62 +45,42 @@ into plain-English next steps, naming the owner if one is known) - **Open Questi
 Risks** (bullet list of anything raised but not resolved; write "None raised in this
 meeting" if there aren't any). {_PRODUCT_GROUPING_RULE} {_GROUNDING_RULE}"""
 
-_STANDARD_REQUIREMENT_AREAS = [
-    "Organisation Structure",
-    "Customer Base & New Acquisition",
-    "Order Management",
-    "Visit & Route Planning",
-    "Attendance",
-    "Expense Management",
-    "Payment Collection",
-    "Current System & Integration",
-]
+BRD_SYSTEM_PROMPT = f"""You are the Business Requirements Document (BRD) writer for
+Meeting Saathi. Write a generic, product-agnostic BRD from the extracted facts and
+transcript you're given -- this must read as a real business document, not a summary
+of a meeting. Structure: **Purpose / Business Objective** (why this initiative exists,
+in business terms) - **Scope** (what's in scope, based only on what was actually
+discussed) - **Stakeholders** (use the authoritative attendees list, plus any
+stakeholder named in extracted_facts.requirements/risks/assumptions who wasn't
+necessarily on the call) - **Business Requirements** (one entry per item in
+extracted_facts.requirements, citing its id, grouped by category; mark any requirement
+whose status is "needs_clarification" as **[Needs Clarification]** rather than writing
+around the gap) - **Assumptions** (from extracted_facts.assumptions) - **Dependencies**
+(from extracted_facts.dependencies) - **Risks** (from extracted_facts.risks) - **Open
+Questions** (from extracted_facts.open_questions). Never invent a requirement, risk,
+assumption, or dependency that isn't in the extracted facts -- this document only
+organizes and narrates what was already extracted, it doesn't add to it.
+{_PRODUCT_GROUPING_RULE} {_GROUNDING_RULE}"""
 
-REQUIREMENT_GATHERING_SYSTEM_PROMPT = f"""You are the Requirement Gathering Sheet
-writer for Meeting Saathi. Sarathi is the product being sold/implemented; this
-meeting is a requirement-gathering call with a client. Your job is to produce one row
-per requirement area, each row mapping what the client discussed to how it fits into
-Sarathi.
+STORIES_AND_ACCEPTANCE_CRITERIA_SYSTEM_PROMPT = f"""You are the User Stories and
+Acceptance Criteria writer for Meeting Saathi. For EVERY item in
+extracted_facts.requirements whose status is "clear", write one user story: a
+`requirement_id` (copied exactly from that requirement's id), a role for `as_a`
+(the stakeholder/actor who benefits -- use the requirement's stakeholder field if
+present, otherwise infer the most reasonable role directly from the requirement's own
+wording, never a generic placeholder like "user" if a more specific role is evident),
+a capability for `i_want`, a benefit for `so_that`, a `priority` (copy the
+requirement's priority if present, otherwise null), and 2-5 concrete
+`acceptance_criteria` bullet points that are specific enough for a developer to know
+when the story is done. For a requirement whose status is "needs_clarification", still
+include it, but set `acceptance_criteria` to a single item:
+"Needs Clarification: <what's unclear>" -- never invent acceptance criteria to paper
+over an unclear requirement. Do not invent a story for anything not present in
+extracted_facts.requirements. {_GROUNDING_RULE}"""
 
-You MUST always output one row for each of these standard areas, in this order:
-{", ".join(_STANDARD_REQUIREMENT_AREAS)}.
-If a standard area was not actually discussed in this meeting, still include its row,
-with discussion_points = ["Not discussed in this meeting"], sarathi_mapping = "Not
-discussed in this meeting", and open_queries = [].
-
-After the standard areas, add further rows ONLY for genuinely distinct additional
-requirement areas that were actually discussed and are not covered by a standard area
-above (for example: AMC & Service, Complaint Management, Reporting & Analytics -- these
-are examples, not an exhaustive list; name the area whatever fits what was actually
-discussed).
-
-For every row:
-- area: the area name, plus a key identifying detail in parentheses if one was
-  mentioned (e.g. "Field Team (12 Employees)").
-- discussion_points: bullet points of what the client actually said about this area --
-  only things explicitly discussed, never invented.
-- sarathi_mapping: how this requirement maps into Sarathi -- which module/feature
-  covers it, or what customisation would be needed. If the meeting didn't get far
-  enough to discuss a mapping, write "Not discussed in this meeting".
-- open_queries: open questions about this area that came up but weren't answered in
-  the meeting. Empty list if there are none.
-{_GROUNDING_RULE}"""
-
-ACTION_POINTS_SYSTEM_PROMPT = f"""You are the Discussion + Action Points writer for
-Meeting Saathi. Structure: Discussion Summary (grouped by topic, noting who said
-what for the notable points -- use speaker names) - Action Items (a table-like list:
-Owner - Action - Due date if mentioned - source timestamp). Every action item MUST
-name an owner if one was extractable; if the transcript genuinely left it unclear who
-owns an item, write "Owner unclear from meeting" rather than guessing a name.
-{_GROUNDING_RULE}"""
-
-# Gemini structured-output schemas (see extract_prompt.py for the format
-# notes -- UPPERCASE types, "nullable" instead of type unions). MOM and
-# Action Points are genuinely prose-shaped, so they share one simple
-# {title, markdown_body} schema; the Requirement Gathering Sheet's hard
-# 4-column/8-standard-row contract gets its own structured schema instead
-# (see app/docgen/DESIGN.md for why) with the markdown table built from it
-# afterward in render_tables.py.
+# Gemini structured-output schemas (see extract_prompt.py for the format notes --
+# UPPERCASE types, "nullable" instead of type unions). MOM/Meeting Analysis/BRD are
+# genuinely prose-shaped, so they share one simple {title, markdown_body} schema.
 DOCUMENT_RESPONSE_SCHEMA = {
     "type": "OBJECT",
     "properties": {
@@ -108,48 +91,32 @@ DOCUMENT_RESPONSE_SCHEMA = {
 }
 
 MOM_RESPONSE_SCHEMA = DOCUMENT_RESPONSE_SCHEMA
-ACTION_POINTS_RESPONSE_SCHEMA = DOCUMENT_RESPONSE_SCHEMA
 MEETING_ANALYSIS_RESPONSE_SCHEMA = DOCUMENT_RESPONSE_SCHEMA
+BRD_RESPONSE_SCHEMA = DOCUMENT_RESPONSE_SCHEMA
 
-REQUIREMENT_GATHERING_RESPONSE_SCHEMA = {
+# User Stories and Acceptance Criteria are generated from ONE shared Gemini call
+# (see app/docgen/engine.py:generate_user_stories_and_acceptance_criteria()) and
+# rendered into two separate documents by two small renderers in render_tables.py
+# reading the same `stories` list -- saves a Gemini call versus generating each
+# document independently.
+STORIES_AND_ACCEPTANCE_CRITERIA_RESPONSE_SCHEMA = {
     "type": "OBJECT",
     "properties": {
-        "title": {"type": "STRING"},
-        "rows": {
+        "stories": {
             "type": "ARRAY",
-            "description": (
-                "One row per requirement area. MUST include all 8 standard areas "
-                f"({', '.join(_STANDARD_REQUIREMENT_AREAS)}) in that order, "
-                "even if a standard area wasn't discussed (use 'Not discussed in "
-                "this meeting' filler for that row's discussion_points/"
-                "sarathi_mapping). Add further rows only for other distinct areas "
-                "actually discussed."
-            ),
             "items": {
                 "type": "OBJECT",
                 "properties": {
-                    "area": {
-                        "type": "STRING",
-                        "description": 'Area name, plus a key detail in parentheses if mentioned (e.g. "Field Team (12 Employees)").',
-                    },
-                    "discussion_points": {
-                        "type": "ARRAY",
-                        "items": {"type": "STRING"},
-                        "description": "Bullet points of what the client actually discussed for this area.",
-                    },
-                    "sarathi_mapping": {
-                        "type": "STRING",
-                        "description": "How this requirement maps into Sarathi (module/feature/customisation).",
-                    },
-                    "open_queries": {
-                        "type": "ARRAY",
-                        "items": {"type": "STRING"},
-                        "description": "Open questions about this area not yet answered. Empty list if none.",
-                    },
+                    "requirement_id": {"type": "STRING"},
+                    "as_a": {"type": "STRING"},
+                    "i_want": {"type": "STRING"},
+                    "so_that": {"type": "STRING"},
+                    "priority": {"type": "STRING", "nullable": True},
+                    "acceptance_criteria": {"type": "ARRAY", "items": {"type": "STRING"}},
                 },
-                "required": ["area", "discussion_points", "sarathi_mapping", "open_queries"],
+                "required": ["requirement_id", "as_a", "i_want", "so_that", "acceptance_criteria"],
             },
         },
     },
-    "required": ["title", "rows"],
+    "required": ["stories"],
 }
