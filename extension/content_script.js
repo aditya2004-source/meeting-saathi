@@ -5,6 +5,45 @@
 
 let inCall = false;
 
+// Reloading/updating the extension does NOT re-inject this content script
+// into tabs that were already open -- the old instance keeps running with a
+// now-dead extension context. Every chrome.runtime.sendMessage() call from
+// that orphaned instance throws synchronously ("Extension context
+// invalidated"), and since poll() below runs every 2s, an unguarded call
+// here means that exact error spamming the console forever. Confirmed the
+// hard way: this is exactly what a mid-recording extension reload produces.
+// safeSendMessage() catches it once, stops all further polling/observing in
+// this dead tab (nothing productive can happen from here anymore -- a fresh
+// content script instance needs a real page reload), and tells the user so
+// via the same on-page banner used for every other real failure here,
+// instead of leaving them looking at a silent, confusing recording that can
+// never actually finish.
+let contextInvalidated = false;
+let pollIntervalId = null;
+
+function safeSendMessage(message) {
+  if (contextInvalidated) return;
+  try {
+    chrome.runtime.sendMessage(message);
+  } catch (err) {
+    const isContextInvalidated = String((err && err.message) || err).includes("Extension context invalidated");
+    if (isContextInvalidated) {
+      contextInvalidated = true;
+      if (pollIntervalId) clearInterval(pollIntervalId);
+      stopSpeakerObserver();
+      stopRosterScraper();
+      showBanner(
+        "Meeting Saathi: the extension was updated/reloaded -- refresh this page to keep recording working.",
+        true,
+        true
+      );
+    }
+    // Any other error here must never crash this tab's page (Meet itself) --
+    // there's nothing else productive to do about a one-off messaging
+    // failure that isn't a dead context.
+  }
+}
+
 // Speaker-name detection (best-effort, only runs while a recording is
 // actually in progress -- see extension/DESIGN.md for the full design and
 // its fragility caveats). Google Meet has no public API for "who's
@@ -283,7 +322,7 @@ function onPossibleSpeakerChange() {
     pendingSpeakerTimer = null;
     activeSpeakerName = pendingSpeakerName;
     if (activeSpeakerName) {
-      chrome.runtime.sendMessage({
+      safeSendMessage({
         type: "SPEAKER_ACTIVE",
         name: activeSpeakerName,
         atMs: Date.now(),
@@ -384,7 +423,7 @@ function sendRosterUpdate(names) {
   // background.js keeps the latest snapshot, so a name dropping off Meet's
   // panel between scrapes (e.g. it briefly failed to render) doesn't lose
   // a name already captured.
-  chrome.runtime.sendMessage({ type: "ROSTER_UPDATE", names, atMs: Date.now() });
+  safeSendMessage({ type: "ROSTER_UPDATE", names, atMs: Date.now() });
 }
 
 function scrapeRoster() {
@@ -508,7 +547,7 @@ function poll() {
   const nowInCall = isInCall();
   if (nowInCall && !inCall) {
     inCall = true;
-    chrome.runtime.sendMessage({ type: "MEETING_JOINED", title: getMeetingTitle() });
+    safeSendMessage({ type: "MEETING_JOINED", title: getMeetingTitle() });
     // Chrome only allows tabCapture to start in direct response to the user
     // invoking the extension itself -- clicking the toolbar icon, a
     // chrome.commands keyboard shortcut, or a context menu item. A click on
@@ -519,7 +558,7 @@ function poll() {
     showBanner("👆 Click the Meeting Saathi icon to start recording", false, true);
   } else if (!nowInCall && inCall) {
     inCall = false;
-    chrome.runtime.sendMessage({ type: "MEETING_LEFT" });
+    safeSendMessage({ type: "MEETING_LEFT" });
     const banner = document.getElementById("sarathi-meeting-bot-banner");
     if (banner) banner.remove(); // left before starting -- nothing left to remind about
     // Safety net in case a STARTED/DONE/FAILED message was ever missed --
@@ -532,4 +571,4 @@ function poll() {
   }
 }
 
-setInterval(poll, 2000);
+pollIntervalId = setInterval(poll, 2000);

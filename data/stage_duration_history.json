@@ -1,7 +1,7 @@
 {
   "extract_facts": {
-    "count": 13,
-    "mean": 12.987869788692059
+    "count": 14,
+    "mean": 12.343910902642815
   },
   "generate_requirement_gathering": {
     "count": 8,
