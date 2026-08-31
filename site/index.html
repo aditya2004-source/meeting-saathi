@@ -401,6 +401,12 @@ img{max-width:100%}
 .pillrow .p button{background:var(--panel-2);width:17px;height:17px;border-radius:50%;color:var(--muted);font-size:11px;line-height:1}
 .hint{font-size:11.5px;color:var(--muted);margin-top:4px}
 .divider{height:1px;background:var(--line);margin:24px 0}
+.ext-steps{margin:0;padding:0;list-style:none;counter-reset:x}
+.ext-steps li{counter-increment:x;position:relative;padding:11px 0 11px 40px;border-bottom:1px solid var(--line);font-size:13.5px;color:var(--ink-soft)}
+.ext-steps li:last-child{border-bottom:0}
+.ext-steps li::before{content:counter(x);position:absolute;left:0;top:9px;width:24px;height:24px;border-radius:7px;border:1px solid var(--accent);color:var(--accent);font-family:var(--font-mono);font-size:12px;display:grid;place-items:center}
+.ext-steps li b{color:var(--ink);font-weight:500}
+#extStore[aria-disabled],a.btn[aria-disabled]{opacity:.55;pointer-events:none}
 
 /* ================= owner console ================= */
 .owner-shell{max-width:1020px;margin:0 auto;padding:26px 26px 64px}
@@ -540,6 +546,7 @@ img{max-width:100%}
       <span class="brand" style="display:flex;align-items:center;gap:8px;font-weight:600;color:var(--ink)"><span class="logo-tile s" style="width:22px;height:22px;border-radius:6px"><span class="logo"></span></span> Meeting Saathi</span>
       <a href="#lp-how">How it works</a>
       <a href="#lp-pricing">Pricing</a>
+      <a href="#/extension">Chrome extension</a>
       <a href="#/login">Log in</a>
       <span class="sp"></span>
       <span>&copy; 2026 &middot; Every meeting &rarr; the exact document you need.</span>
@@ -639,6 +646,45 @@ img{max-width:100%}
         <div class="line"><span>Gemini quota state</span><b>billing on</b></div>
         <div class="line"><span>Support inbox</span><b>3 open</b></div>
       </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== EXTENSION ============================== -->
+<section class="screen" id="s-extension" hidden>
+  <nav class="lnav"><div class="row">
+    <a class="brand" href="#/"><span class="logo-tile s"><span class="logo"></span></span> Meeting Saathi</a>
+    <span class="sp"></span>
+    <button class="icon-btn" data-theme-toggle aria-label="Toggle theme">◐</button>
+    <a class="btn btn-sm" href="#/app">Back to app</a>
+  </div></nav>
+  <div class="wrap" style="max-width:740px;padding-top:44px;padding-bottom:72px">
+    <p class="eyebrow">Chrome extension</p>
+    <h1 style="font-size:clamp(1.8rem,4vw,2.3rem);margin:8px 0 14px">Record live Google&nbsp;Meet calls</h1>
+    <p style="color:var(--ink-soft);max-width:54ch">Add it once. On any Meet call, one click records in the background &mdash; no bot joins, nobody else sees it. Audio uploads while you talk, so your documents are ready by the time you leave.</p>
+
+    <div style="display:flex;gap:12px;flex-wrap:wrap;margin:26px 0 8px">
+      <a class="btn btn-primary btn-lg" href="downloads/meeting-saathi-extension.zip" download>Download extension&nbsp;.zip</a>
+      <a class="btn btn-lg" id="extStore" href="#/extension" aria-disabled="true">Add to Chrome (soon)</a>
+    </div>
+    <p class="hint">Chrome Web Store listing is pending &mdash; for now install the .zip manually (2 minutes, works the same).</p>
+
+    <div class="divider"></div>
+
+    <h3 style="font-size:1.1rem;margin-bottom:14px">Install manually</h3>
+    <ol class="ext-steps">
+      <li><b>Download the .zip</b> above and unzip it &mdash; you get a <span class="mono">meeting-saathi-extension</span> folder.</li>
+      <li>Open <span class="mono">chrome://extensions</span> in Chrome.</li>
+      <li>Turn on <b>Developer mode</b> (top-right toggle).</li>
+      <li>Click <b>Load unpacked</b> and pick the unzipped folder.</li>
+      <li>Pin the Meeting Saathi icon to your toolbar. On a Meet call, click it &rarr; <b>Start Recording</b>.</li>
+    </ol>
+
+    <div class="divider"></div>
+
+    <div class="panel" style="background:var(--warn-wash);border-color:color-mix(in srgb,var(--warn) 30%,transparent)">
+      <b style="color:var(--warn)">One more thing for live recording</b>
+      <p style="font-size:13px;color:var(--ink-soft);margin-top:6px">Live Meet capture needs the Meeting Saathi companion running on your computer (it does the transcription + document generation). <b>Uploading a recording</b> from the dashboard works on its own, no companion needed &mdash; good for trying it out.</p>
     </div>
   </div>
 </section>
@@ -955,6 +1001,7 @@ Recommendation &amp; next step</textarea></div>
     login:      $("#s-login"),
     ownerLogin: $("#s-owner-login"),
     owner:      $("#s-owner"),
+    extension:  $("#s-extension"),
     app:        $("#s-app")
   };
   var views = {
@@ -972,7 +1019,8 @@ Recommendation &amp; next step</textarea></div>
     "#/app/review":       { screen:"app", view:"review", guard:"user" },
     "#/app/templates":    { screen:"app", view:"templates", guard:"user" },
     "#/app/generate":     { screen:"app", view:"generate", guard:"user" },
-    "#/app/settings":     { screen:"app", view:"settings", guard:"user" }
+    "#/app/settings":     { screen:"app", view:"settings", guard:"user" },
+    "#/extension":        { screen:"extension" }
   };
   ROUTES[OWNER_PATH] = { screen:"ownerLogin" };
   ROUTES[OWNER_PATH + "/console"] = { screen:"owner", guard:"owner" };
@@ -1104,11 +1152,7 @@ Recommendation &amp; next step</textarea></div>
       var s = getSession(); if(s){ s.ownerVerified = false; setSession(s); }
       route("#/");
     }
-    if(e.target.closest("[data-ext]")){
-      var el = document.getElementById("lp-how");
-      route("#/");
-      setTimeout(function(){ var h = document.getElementById("lp-how"); if(h) h.scrollIntoView({behavior:reduce?"auto":"smooth"}); }, 60);
-    }
+    if(e.target.closest("[data-ext]")){ e.preventDefault(); route("#/extension"); }
   });
 
   /* -------- auth actions -------- */
