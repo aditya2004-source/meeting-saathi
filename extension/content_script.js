@@ -525,21 +525,21 @@ chrome.runtime.onMessage.addListener((message) => {
     recordingActive = false;
     stopSpeakerObserver();
     stopRosterScraper();
-  } else if (message.type === "SARATHI_UPLOAD_DONE") {
-    showBanner("Recording saved — documents are being generated", false);
+  } else if (message.type === "SARATHI_PROCESSING_STARTED") {
+    showBanner("Recording done — transcribing and generating documents with your Gemini key…", false);
     recordingActive = false;
     stopSpeakerObserver();
     stopRosterScraper();
+  } else if (message.type === "SARATHI_PROCESSING_DONE") {
+    showBanner("Your Minutes of Meeting and Meeting Analysis are ready — open Meeting Saathi.", false);
   } else if (message.type === "SARATHI_UPLOAD_FAILED") {
-    showBanner(`Meeting Saathi: upload failed (${message.reason}) — is the local server running?`, true);
-    recordingActive = false;
-    stopSpeakerObserver();
-    stopRosterScraper();
-  } else if (message.type === "SARATHI_CHUNK_UPLOAD_FAILED") {
     showBanner(
-      `Meeting Saathi: chunk ${message.sequence} failed to upload (${message.reason}) — some audio may be missing`,
+      `Meeting Saathi: couldn't process the recording (${message.reason}) — check your internet and your Gemini API key in Settings.`,
       true
     );
+    recordingActive = false;
+    stopSpeakerObserver();
+    stopRosterScraper();
   }
 });
 

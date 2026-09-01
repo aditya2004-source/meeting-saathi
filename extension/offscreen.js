@@ -1,433 +1,297 @@
-// Runs in a hidden offscreen document. This is where actual audio capture
-// happens -- MV3 service workers can't use getUserMedia/MediaRecorder, so
-// Chrome requires this separate document for it.
+// Runs in a hidden offscreen document — the one place an MV3 extension can use
+// getUserMedia / MediaRecorder / long-lived fetch / IndexedDB. This document
+// does TWO jobs across a meeting's life:
 //
-// Streaming/chunked upload: instead of recording the whole meeting into one
-// MediaRecorder session and uploading a single Blob at the end,
-// MediaRecorder is stopped and restarted on a fixed interval
-// (CHUNK_INTERVAL_MS). Each stop/start cycle produces one self-contained,
-// independently-decodable WebM file -- individual ondataavailable Blobs
-// from a single continuous session are NOT independently decodable (only
-// the very first one carries the container's init segment/headers), so a
-// real stop/start cycle is required to get chunks the server can actually
-// process on their own. This costs a small (expected <100-200ms) audio gap
-// per cycle -- minimized by starting the next cycle's MediaRecorder
-// immediately in onstop, before doing anything else (including the upload
-// of the blob that just finished).
+//   1. CAPTURE: tab audio + mic -> WebAudio mix -> ONE continuous MediaRecorder.
+//      A requestData() flush timer appends each blob-part to IndexedDB
+//      (lib/recorder.js + lib/idb.js), so losing this document mid-meeting costs
+//      only the audio since the last flush.
+//
+//   2. PROCESSING: assemble -> Gemini Files upload -> transcribe -> extract
+//      facts -> generate MOM + Meeting Analysis, as a resumable state machine
+//      driven off the meeting row's `stage` (lib/pipeline.js). If this document
+//      is reclaimed mid-pipeline, the SW recreates it and selfHealOnLoad() /
+//      RESUME_PROCESSING continues from the last committed stage.
+//
+// No server. No founder resource. The only network egress is the user's own
+// Gemini key, from lib/pipeline.js.
 
-// Phase 1 (sharing with BA testers): configurable, same convention as
-// background.js's own copy of this helper (separate execution context,
-// can't share code) -- set once in popup.js's Setup section. Defaults to
-// the current Cloudflare Tunnel URL so a customer install works without
-// them ever typing a server address; update if the tunnel URL changes.
-const DEFAULT_SERVER_BASE_URL = "http://localhost:8420";
+import { GeminiClient } from "./lib/gemini.js";
+import { MEETING_STATUS, MeetingStore } from "./lib/idb.js";
+import { MeetingRecorder } from "./lib/recorder.js";
+import { runPipeline } from "./lib/pipeline.js";
 
-// Defensive: this is the very first `await` in both uploadChunk() and
-// logDebug(), and neither of those callers originally wrapped it in a
-// try/catch of their own -- confirmed as the actual root cause tonight
-// (live-tested: zero chunk uploads and zero diagnostic breadcrumbs ever
-// reached the server from THIS file specifically, while background.js's
-// identical-shaped calls worked every time) and matches this session's very
-// first bug report, an uncaught error whose stack trace pointed at exactly
-// this line. Whatever the underlying cause of chrome.storage.local.get()
-// failing inside an offscreen document turns out to be, this function
-// should simply never be a single point of failure for the entire upload
-// pipeline -- falling back to the default URL is always a safe, correct
-// answer here, same as the `serverBaseUrl || DEFAULT_SERVER_BASE_URL` logic
-// already does for the common case (key never set).
-async function getServerBaseUrl() {
+let store = null;
+let recorder = null;
+let audioContext = null;
+let capturedStreams = [];
+let activeRunId = null;
+let activeTitle = "Google Meet";
+
+// runIds this document is already processing — guards against the on-load
+// resume racing an explicit RESUME_PROCESSING / STOP_AND_PROCESS for the same
+// meeting (double Gemini spend, out-of-order stage writes).
+const inFlight = new Set();
+
+async function getStore() {
+  if (!store) store = await MeetingStore.open();
+  return store;
+}
+
+/** Build a GeminiClient from the user's own key + settings. The offscreen
+ *  document can't rely on chrome.storage.* (only chrome.runtime is guaranteed
+ *  here), so it asks the service worker. */
+async function makeClientFactory() {
+  let s;
   try {
-    const { serverBaseUrl } = await chrome.storage.local.get("serverBaseUrl");
-    return serverBaseUrl || DEFAULT_SERVER_BASE_URL;
+    s = await chrome.runtime.sendMessage({ type: "GET_SETTINGS" });
   } catch (err) {
-    console.error("Meeting Saathi: chrome.storage.local.get() failed, falling back to default server URL.", err);
-    return DEFAULT_SERVER_BASE_URL;
+    throw new Error(`Could not read settings from the extension: ${(err && err.message) || err}`);
+  }
+  if (!s || s.error) throw new Error(`Could not read settings: ${(s && s.error) || "no response"}`);
+  const { geminiApiKey, model, qualityMode, languageMode } = s;
+  if (!geminiApiKey) throw new Error("No Gemini API key set. Open Meeting Saathi settings and paste your key.");
+  return {
+    makeClient: (rowModel) =>
+      new GeminiClient({
+        apiKey: geminiApiKey,
+        model: rowModel || model || "gemini-3.6-flash",
+        requestTimeoutMs: 180000, // a stalled Gemini connection must fail, not hang the pipeline
+        uploadTimeoutMs: 600000, // a 90-min audio upload can legitimately take minutes
+        onRetry: (n, ms, statusCode) => debugLog("gemini:retry", `attempt=${n} in=${ms}ms status=${statusCode}`),
+      }),
+    qualityMode: qualityMode !== false,
+    languageMode: languageMode || "translate",
+  };
+}
+
+async function buildCtx() {
+  const { makeClient, qualityMode, languageMode } = await makeClientFactory();
+  return {
+    store: await getStore(),
+    makeClient,
+    qualityMode,
+    languageMode,
+    send: (type, payload) => chrome.runtime.sendMessage({ type, ...payload }).catch(() => {}),
+    logger: (msg, err) => debugLog("pipeline", `${msg}${err ? " :: " + ((err && err.message) || err) : ""}`),
+  };
+}
+
+/** Run the pipeline for one meeting, deduped, never throwing to the caller. */
+async function processMeeting(runId) {
+  if (inFlight.has(runId)) {
+    debugLog("processMeeting:already-running", runId);
+    return { ok: true, alreadyRunning: true };
+  }
+  inFlight.add(runId);
+  debugLog("processMeeting:start", runId);
+  try {
+    const ctx = await buildCtx();
+    const out = await runPipeline(runId, ctx);
+    debugLog("processMeeting:done", `${runId} :: ${JSON.stringify(out)}`);
+    return { ok: true, runId };
+  } catch (err) {
+    const msg = String((err && err.message) || err);
+    debugLog("processMeeting:failed", `${runId} :: ${msg}`);
+    // runPipeline marks its own stage failures — but a setup failure (no API
+    // key, storage error) happens in buildCtx() *before* runPipeline, and
+    // would otherwise leave the row silently stuck at `processing`. Surface it
+    // so the dashboard shows "Failed: <reason>" + Retry instead of a spinner
+    // that never ends.
+    try {
+      const db = await getStore();
+      const m = await db.getMeeting(runId);
+      if (m && m.status === MEETING_STATUS.PROCESSING) {
+        await db.updateMeeting(runId, { status: MEETING_STATUS.FAILED, error: msg });
+        chrome.runtime.sendMessage({ type: "PROCESSING_FAILED", runId, stage: m.stage || "assembling", error: msg }).catch(() => {});
+      }
+    } catch {
+      /* best effort */
+    }
+    return { ok: false, runId, error: msg };
+  } finally {
+    inFlight.delete(runId);
   }
 }
 
-// Diagnostic breadcrumb channel -- see app/main.py's /debug/log and
-// background.js's own copy of this helper for the full rationale. This is
-// the more important of the two copies: the offscreen document's console is
-// one of the two Chrome surfaces this session's tooling has been unable to
-// reach directly, so without this there is no way to see what's actually
-// happening inside startRecording()/uploadChunk() at all.
-function logDebug(event, detail) {
-  getServerBaseUrl()
-    .then((serverBaseUrl) => {
-      const formData = new FormData();
-      formData.append("source", "offscreen");
-      formData.append("event", event);
-      formData.append("detail", detail === undefined ? "" : String(detail));
-      return fetchWithTimeout(`${serverBaseUrl}/debug/log`, { method: "POST", body: formData }, 5000);
-    })
-    .catch(() => {});
+function debugLog(event, detail) {
+  // Replaces the old server /debug/log breadcrumb — now a message to the SW,
+  // which keeps a capped ring buffer in chrome.storage.local (Phase 4).
+  chrome.runtime.sendMessage({ type: "DEBUG_LOG", source: "offscreen", event, detail: String(detail ?? "") }).catch(() => {});
 }
 
-const CHUNK_INTERVAL_MS = 50000; // ~50s per chunk
+// --------------------------------------------------------------------- capture
 
-let mediaRecorder = null;
-let destinationStream = null;
-let currentChunkBlobs = [];
-let runId = null;
-let sequence = 0;
-let currentTitle = "Google Meet";
-let audioContext = null;
-let capturedStreams = [];
-let cycleTimer = null;
-let stopRequested = false;
-let stopResolve = null;
-// Set the moment ANY finalization sequence begins (an explicit stop, or
-// the capture stream dying on its own -- see handleCycleStop()) and
-// cleared once it resolves. Exists because two independent "the stream
-// just ended" signals can fire at nearly the same moment for the exact
-// same real-world event (the tab's audio track ending): the track's own
-// "ended" listener below (which asks background.js to call
-// stopRecording()) and MediaRecorder's own onstop handler. Without this,
-// whichever one loses that race finds mediaRecorder already null/
-// "inactive" and reports a spurious "not recording" failure -- confirmed
-// in production -- instead of waiting for the finalization already under
-// way to actually finish and report its real result.
-let finalizePromise = null;
-
-async function startRecording(streamId, title, newRunId) {
-  currentTitle = title || "Google Meet";
-  runId = newRunId;
-  sequence = 0;
-  stopRequested = false;
+async function startCapture(streamId, title, runId) {
+  activeTitle = title || "Google Meet";
+  activeRunId = runId;
   capturedStreams = [];
-  logDebug("startRecording:begin", `runId=${runId} streamId=${streamId ? "yes" : "no"}`);
+  debugLog("startCapture:begin", `runId=${runId}`);
 
-  // The tab's own audio output (what plays through your speakers -- i.e.
-  // other participants' voices in the meeting).
+  // The tab's own audio output — the other participants' voices.
   const tabStream = await navigator.mediaDevices.getUserMedia({
-    audio: {
-      mandatory: {
-        chromeMediaSource: "tab",
-        chromeMediaSourceId: streamId,
-      },
-    },
+    audio: { mandatory: { chromeMediaSource: "tab", chromeMediaSourceId: streamId } },
     video: false,
   });
   capturedStreams.push(tabStream);
-  logDebug("startRecording:tab getUserMedia resolved", "");
 
-  // Your own microphone. Meet does NOT echo your own voice back through the
-  // tab's audio output, so without this, your own speech would be missing
-  // from the recording entirely.
-  //
-  // Raced against a timeout: an offscreen document CANNOT show Chrome's
-  // native mic permission prompt (a platform restriction -- see popup.js's
-  // own comment on this). If permission is still unresolved ("prompt"
-  // state) when this runs, getUserMedia has nobody able to answer the
-  // prompt it silently opened -- confirmed in production: the call just
-  // hangs forever instead of rejecting, which stalls this whole function
-  // before startRecorderCycle() ever runs, so NOTHING is ever captured or
-  // uploaded and no error is ever reported (background.js's own
-  // START_RECORDING round-trip hangs right along with it). A real
-  // permission denial rejects quickly on its own and is unaffected by this
-  // race; only the stuck-prompt case needs the timeout to fall through to
-  // the existing tab-audio-only fallback below.
-  const MIC_PERMISSION_TIMEOUT_MS = 4000;
+  // Your microphone. Meet does not echo your own voice through the tab audio,
+  // so without this your speech is missing entirely. Raced against a timeout:
+  // an offscreen document can't surface Chrome's mic-permission prompt, so a
+  // still-"prompt" permission would hang getUserMedia forever.
   let micStream = null;
   try {
     micStream = await Promise.race([
       navigator.mediaDevices.getUserMedia({ audio: true }),
-      new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("microphone permission prompt unanswered")), MIC_PERMISSION_TIMEOUT_MS)
-      ),
+      new Promise((_, reject) => setTimeout(() => reject(new Error("microphone permission prompt unanswered")), 4000)),
     ]);
     capturedStreams.push(micStream);
-    logDebug("startRecording:mic getUserMedia resolved", "");
   } catch (err) {
     console.warn("Meeting Saathi: microphone unavailable, recording tab audio only.", err);
-    logDebug("startRecording:mic getUserMedia failed/timed out", String((err && err.message) || err));
+    debugLog("startCapture:mic unavailable", (err && err.message) || err);
   }
 
-  // Safety net independent of content_script.js's DOM-based call-end
-  // detection: if the captured tab itself closes or navigates away (its
-  // audio track ends), tell background.js so it can stop/finalize through
-  // the normal path -- otherwise a recording could be stuck running
-  // forever if the "you left the call" DOM signal is ever missed (this is
-  // exactly what happened before hasLeftMeetingScreen() was added in
-  // content_script.js -- this is the second, independent layer for the
-  // same failure mode, e.g. closing the tab outright).
+  // Safety net independent of content_script.js's DOM call-end detection: if
+  // the captured tab closes/navigates (its audio track ends), tell the SW.
   tabStream.getAudioTracks().forEach((track) => {
     track.addEventListener("ended", () => {
-      chrome.runtime.sendMessage({ type: "TAB_STREAM_ENDED" }).catch(() => {});
+      chrome.runtime.sendMessage({ type: "TAB_STREAM_ENDED", runId }).catch(() => {});
     });
   });
 
   audioContext = new AudioContext();
   const destination = audioContext.createMediaStreamDestination();
   audioContext.createMediaStreamSource(tabStream).connect(destination);
-  if (micStream) {
-    audioContext.createMediaStreamSource(micStream).connect(destination);
-  }
+  if (micStream) audioContext.createMediaStreamSource(micStream).connect(destination);
+  // Route the tab audio back to the speakers — capturing a tab mutes its
+  // normal playback, so without this you can't hear the meeting.
+  audioContext.createMediaStreamSource(tabStream).connect(audioContext.destination);
 
-  // Capturing the tab mutes its normal playback -- route it back to your
-  // speakers so you can still hear the meeting while it's being recorded.
-  const monitorSource = audioContext.createMediaStreamSource(tabStream);
-  monitorSource.connect(audioContext.destination);
+  const db = await getStore();
+  await db.createMeeting({ runId, title: activeTitle, audioMimeType: "audio/webm" });
 
-  destinationStream = destination.stream;
-  logDebug("startRecording:audio graph wired", "");
-  startRecorderCycle();
-  logDebug("startRecording:startRecorderCycle done", mediaRecorder ? mediaRecorder.state : "null");
-  scheduleNextCycle();
-  logDebug("startRecording:scheduleNextCycle done, fully started", "");
+  recorder = new MeetingRecorder({
+    stream: destination.stream,
+    runId,
+    store: db,
+    onError: (err, ctx) => {
+      console.error("Meeting Saathi: recorder error", err, ctx);
+      debugLog("recorder:error", `${(err && err.message) || err} ${JSON.stringify(ctx)}`);
+    },
+  });
+  recorder.start();
+  debugLog("startCapture:recording", recorder.state);
 }
 
-function startRecorderCycle() {
-  currentChunkBlobs = [];
-  mediaRecorder = new MediaRecorder(destinationStream, { mimeType: "audio/webm;codecs=opus" });
-  mediaRecorder.ondataavailable = (event) => {
-    if (event.data && event.data.size > 0) currentChunkBlobs.push(event.data);
-  };
-  mediaRecorder.onstop = handleCycleStop;
-  mediaRecorder.start(1000);
-}
-
-function scheduleNextCycle() {
-  cycleTimer = setTimeout(() => cycleRecorder(false), CHUNK_INTERVAL_MS);
-}
-
-function cycleRecorder(isFinal) {
-  if (cycleTimer) {
-    clearTimeout(cycleTimer);
-    cycleTimer = null;
-  }
-  if (!mediaRecorder || mediaRecorder.state === "inactive") return;
-  stopRequested = isFinal;
-  mediaRecorder.stop();
-}
-
-function _tearDownCapture() {
-  capturedStreams.forEach((stream) => stream.getTracks().forEach((track) => track.stop()));
-  const closing = audioContext ? audioContext.close() : Promise.resolve();
+function teardownCapture() {
+  capturedStreams.forEach((s) => s.getTracks().forEach((t) => t.stop()));
+  capturedStreams = [];
+  const closing = audioContext ? audioContext.close().catch(() => {}) : Promise.resolve();
   audioContext = null;
-  mediaRecorder = null;
   return closing;
 }
 
-async function handleCycleStop() {
-  const blob = new Blob(currentChunkBlobs, { type: "audio/webm" });
-  const finishedSequence = sequence;
-  sequence += 1;
-  const isFinal = stopRequested;
-  let streamDied = false;
-  logDebug("handleCycleStop:begin", `sequence=${finishedSequence} isFinal=${isFinal} blobSize=${blob.size}`);
+/**
+ * Stop capture, mark the row for processing, ack the caller, then run the
+ * resumable pipeline in the background (its PROCESSING_* messages carry status).
+ */
+async function stopAndProcess(runId) {
+  const db = await getStore();
+  const id = runId || activeRunId;
+  if (!id) return { ok: false, reason: "no active meeting" };
 
-  if (isFinal) {
-    // No more audio needed -- tear down capture now, before the upload
-    // (which can take a while) rather than after.
-    await _tearDownCapture();
-  } else {
-    try {
-      // Start the next cycle immediately -- before uploading the blob that
-      // just finished -- to keep the recording gap as small as possible.
-      startRecorderCycle();
-      scheduleNextCycle();
-    } catch (err) {
-      // The source stream has ended -- e.g. Chrome silently revoked tab
-      // capture after the tab sat backgrounded for a long time after the
-      // meeting ended. Starting a new MediaRecorder on a dead stream
-      // throws here. Confirmed in production: this exception used to just
-      // vanish (an unhandled rejection inside a MediaRecorder.onstop
-      // handler), leaving the recording permanently stuck -- no more
-      // cycles, no more uploads, no notification -- until a manual stop
-      // click later failed with a confusing "not recording" error, because
-      // this very recorder was the one left sitting inactive. Treat this
-      // chunk as the final one instead of trying (and failing) to continue.
-      console.error("Meeting Saathi: could not start next recording cycle -- source stream likely ended.", err);
-      streamDied = true;
-      await _tearDownCapture();
-    }
+  let seq = 0;
+  let bytes = 0;
+  if (recorder) {
+    ({ seq, bytes } = await recorder.stop());
+    recorder = null;
   }
+  await teardownCapture();
 
-  if (!isFinal && !streamDied) {
-    await uploadChunk(finishedSequence, blob, false);
-    logDebug("handleCycleStop:non-final upload done", `sequence=${finishedSequence}`);
-    return;
-  }
+  // Snapshot the DOM speaker/roster signal the SW accumulated, onto the row,
+  // so the transcription prompt can use it.
+  const [speakerEvents, attendeeRoster] = await Promise.all([
+    chrome.runtime.sendMessage({ type: "GET_SPEAKER_EVENTS_SNAPSHOT" }).then((r) => (r && r.speakerEvents) || []).catch(() => []),
+    chrome.runtime.sendMessage({ type: "GET_ROSTER_SNAPSHOT" }).then((r) => (r && r.attendeeRoster) || []).catch(() => []),
+  ]);
 
-  // Publish the in-flight promise *before* awaiting it -- a concurrently
-  // racing stopRecording() call (background.js's TAB_STREAM_ENDED handler
-  // fires from the exact same underlying "tab audio track ended" event
-  // that can trigger this path, at nearly the same moment) checks this
-  // first and awaits it instead of finding mediaRecorder already null and
-  // reporting a premature "not recording".
-  finalizePromise = uploadChunk(finishedSequence, blob, true);
-  const result = await finalizePromise;
-  finalizePromise = null;
-
-  if (stopResolve) {
-    const resolve = stopResolve;
-    stopResolve = null;
-    resolve(result);
-  } else if (streamDied) {
-    // Nobody was waiting on a stopRecording() promise -- this wasn't a
-    // manual/automatic stop request, the capture just died on its own.
-    // Tell background.js directly (not via the STOP_RECORDING round-trip --
-    // there's nothing left here to stop) so it clears its own state/badge
-    // instead of showing "Recording" forever.
-    chrome.runtime.sendMessage({ type: "CAPTURE_STREAM_DIED", result }).catch(() => {});
-  }
-}
-
-async function fetchSpeakerEventsSnapshot() {
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "GET_SPEAKER_EVENTS_SNAPSHOT" });
-    return (response && response.speakerEvents) || [];
-  } catch {
-    return [];
-  }
-}
-
-async function fetchRosterSnapshot() {
-  try {
-    const response = await chrome.runtime.sendMessage({ type: "GET_ROSTER_SNAPSHOT" });
-    return (response && response.attendeeRoster) || [];
-  } catch {
-    return [];
-  }
-}
-
-const UPLOAD_MAX_ATTEMPTS = 3;
-const UPLOAD_BACKOFF_MS = [1000, 3000, 9000];
-// fetch() has no default timeout -- confirmed in production: during a bad
-// spell of the Cloudflare tunnel's own connection (see the tunnel systemd
-// service's own known reconnect-loop issues), a chunk/finalize upload just
-// hung forever instead of erroring, which stalled EVERYTHING downstream of
-// it -- no more chunks ever uploaded (handleCycleStop() never got back to
-// scheduling the next cycle... actually it already had, but every
-// subsequent cycle's own upload hung the same way), and a manual stop
-// looked permanently "stuck" because stopRecording()'s promise chain
-// ultimately bottoms out in this same uploadChunk() call for the final
-// chunk. Bounding it means a bad connection fails fast into the existing
-// retry/backoff logic instead of freezing the whole pipeline silently.
-const UPLOAD_TIMEOUT_MS = 20000;
-
-async function fetchWithTimeout(url, options, timeoutMs) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    // ngrok's free tier serves an HTML "are you sure you trust this link"
-    // interstitial to any request that looks like a browser navigation,
-    // instead of proxying through to the actual server -- this header is
-    // ngrok's documented way for a known client (this extension) to skip
-    // it. Harmless no-op against Railway/Cloudflare/localhost.
-    const headers = { ...(options && options.headers), "ngrok-skip-browser-warning": "true" };
-    return await fetch(url, { ...options, headers, signal: controller.signal });
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-async function uploadChunk(sequenceNumber, blob, isFinal, attempt = 1) {
-  const serverBaseUrl = await getServerBaseUrl();
-  const url = isFinal
-    ? `${serverBaseUrl}/meetings/${runId}/finalize`
-    : `${serverBaseUrl}/meetings/${runId}/chunk`;
-  const speakerEvents = await fetchSpeakerEventsSnapshot();
-  const attendeeRoster = await fetchRosterSnapshot();
-
-  const formData = new FormData();
-  formData.append("sequence", String(sequenceNumber));
-  formData.append("audio", blob, `chunk-${sequenceNumber}.webm`);
-  // Full accumulated array every time, not just events since the last
-  // chunk -- simpler than delta-tracking, and the payload stays tiny (a
-  // meeting's worth of speaker-change events is at most a few hundred
-  // entries), plus it's safely idempotent if this same chunk gets retried.
-  formData.append("speaker_events", JSON.stringify(speakerEvents));
-  // Same full-snapshot-every-time convention -- the accumulated People-panel
-  // roster as of this upload moment, overwriting attendee_roster.json
-  // server-side with the freshest version each time.
-  formData.append("attendee_roster", JSON.stringify(attendeeRoster));
-
-  logDebug("uploadChunk:begin", `sequence=${sequenceNumber} isFinal=${isFinal} attempt=${attempt} url=${url}`);
-  try {
-    const response = await fetchWithTimeout(url, { method: "POST", body: formData }, UPLOAD_TIMEOUT_MS);
-    const body = await response.json();
-    logDebug("uploadChunk:fetch resolved", `sequence=${sequenceNumber} status=${response.status}`);
-    return { ok: response.ok, ...body };
-  } catch (err) {
-    logDebug(
-      "uploadChunk:fetch threw/timed out",
-      `sequence=${sequenceNumber} attempt=${attempt} err=${String((err && err.message) || err)}`
-    );
-    if (attempt < UPLOAD_MAX_ATTEMPTS) {
-      await new Promise((resolve) => setTimeout(resolve, UPLOAD_BACKOFF_MS[attempt - 1]));
-      return uploadChunk(sequenceNumber, blob, isFinal, attempt + 1);
-    }
-    console.error(
-      `Meeting Saathi: chunk ${sequenceNumber} upload failed after ${UPLOAD_MAX_ATTEMPTS} attempts.`,
-      err
-    );
-    // v1 durability gap, documented: no local persistence/replay queue for
-    // exhausted-retry chunks yet, so this segment's audio is lost. Surfaced
-    // to the user (via background.js) rather than failing silently, so an
-    // incomplete transcript doesn't look like a complete one.
-    chrome.runtime
-      .sendMessage({ type: "CHUNK_UPLOAD_FAILED", sequence: sequenceNumber, reason: String(err) })
-      .catch(() => {});
-    return { ok: false, error: String(err) };
-  }
-}
-
-function stopRecording() {
-  logDebug(
-    "offscreen stopRecording:called",
-    `hasFinalizePromise=${!!finalizePromise} mediaRecorderState=${mediaRecorder ? mediaRecorder.state : "null"}`
-  );
-  // A finalization is already under way (the stream died on its own --
-  // see handleCycleStop()) -- wait for its real result instead of racing
-  // ahead and reporting a spurious "not recording" just because
-  // mediaRecorder already looks inactive to this call.
-  if (finalizePromise) return finalizePromise;
-  return new Promise((resolve) => {
-    if (!mediaRecorder || mediaRecorder.state === "inactive") {
-      resolve({ ok: false, reason: "not recording" });
-      return;
-    }
-    stopResolve = resolve;
-    cycleRecorder(true);
+  await db.updateMeeting(id, {
+    status: MEETING_STATUS.PROCESSING,
+    stage: "assembling",
+    endedAt: new Date().toISOString(),
+    speakerEvents,
+    attendeeRoster,
   });
+  activeRunId = null;
+  debugLog("stopAndProcess:captured", `runId=${id} parts=${seq} bytes=${bytes}`);
+
+  // Fire-and-forget — the caller gets a quick ack; progress arrives via
+  // PROCESSING_* messages. Guarded by inFlight so a later RESUME_PROCESSING
+  // for the same runId is a no-op while this runs.
+  processMeeting(id);
+  return { ok: true, runId: id, parts: seq, bytes };
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.target !== "offscreen") return;
+/** Resume (or start) processing for one meeting — used by the SW after it
+ *  (re)creates this document, and by the on-load self-heal. */
+async function resumeProcessing(runId) {
+  if (!runId) return { ok: false, reason: "no runId" };
+  processMeeting(runId);
+  return { ok: true, runId, started: true };
+}
 
-  if (message.type === "START_RECORDING") {
-    logDebug("onMessage:START_RECORDING received", "");
-    startRecording(message.streamId, message.title, message.runId)
-      .then(() => sendResponse({ ok: true }))
-      .catch((err) => {
-        console.error("Meeting Saathi: startRecording failed.", err);
-        logDebug("startRecording:CAUGHT ERROR", String((err && err.message) || err));
-        sendResponse({ ok: false, error: String(err.message || err) });
-      });
-    return true;
+/** On (re)creation, pick up any meeting already in `processing` whose offscreen
+ *  document died mid-pipeline. Rows still marked `recording` are left for the SW
+ *  to hand back explicitly (it knows whether a capture is genuinely active).
+ *  Routes through processMeeting() so it can't double-run a meeting an explicit
+ *  RESUME_PROCESSING is already handling. */
+async function selfHealOnLoad() {
+  try {
+    const db = await getStore();
+    const resumable = (await db.listResumable()).filter((m) => m.status === MEETING_STATUS.PROCESSING);
+    if (resumable.length === 0) return;
+    debugLog("selfHealOnLoad", `resuming ${resumable.map((m) => m.runId).join(",")}`);
+    for (const m of resumable) processMeeting(m.runId);
+  } catch (err) {
+    debugLog("selfHealOnLoad:error", (err && err.message) || err);
   }
-  if (message.type === "STOP_RECORDING") {
-    stopRecording().then((result) => sendResponse(result));
-    return true;
-  }
-  if (message.type === "FINALIZE_EMPTY") {
-    // Used when the ORIGINAL offscreen document (the one that actually
-    // had mediaRecorder / the real in-progress audio) vanished entirely.
-    // background.js recreates a brand new offscreen document (this one)
-    // and asks it to send a placeholder final chunk instead of trying to
-    // fetch() directly from the service worker -- confirmed in
-    // production that the service-worker-direct attempt kept failing even
-    // though the exact same request works fine via curl, most likely
-    // because the service worker doesn't reliably stay alive for the
-    // whole fetch. This document never actually recorded anything (its
-    // own mediaRecorder is null), so `runId` has to be set explicitly
-    // instead of coming from a real startRecording() call.
-    runId = message.runId;
-    uploadChunk(999999, new Blob([], { type: "audio/webm" }), true)
-      .then((result) => sendResponse(result))
-      .catch((err) => sendResponse({ ok: false, error: String(err.message || err) }));
-    return true;
+}
+// Give the SW a beat to send START_RECORDING for a brand-new meeting first.
+setTimeout(selfHealOnLoad, 3000);
+
+// -------------------------------------------------------------------- messaging
+
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (!message || message.target !== "offscreen") return;
+
+  switch (message.type) {
+    case "START_RECORDING":
+      startCapture(message.streamId, message.title, message.runId)
+        .then(() => sendResponse({ ok: true }))
+        .catch((err) => {
+          console.error("Meeting Saathi: startCapture failed.", err);
+          debugLog("startCapture:ERROR", (err && err.message) || err);
+          sendResponse({ ok: false, error: String((err && err.message) || err) });
+        });
+      return true;
+
+    case "STOP_AND_PROCESS":
+      stopAndProcess(message.runId)
+        .then((r) => sendResponse(r))
+        .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
+      return true;
+
+    case "RESUME_PROCESSING":
+      resumeProcessing(message.runId)
+        .then((r) => sendResponse(r))
+        .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
+      return true;
+
+    case "GET_CAPTURE_STATE":
+      sendResponse({ recording: recorder ? recorder.state === "recording" : false, runId: activeRunId });
+      return false;
+
+    default:
+      return false;
   }
 });

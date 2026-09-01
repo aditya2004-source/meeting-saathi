@@ -1,0 +1,13 @@
+{
+  "name": "meeting-saathi-extension",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Standalone Meeting Saathi Chrome extension. package.json exists only so Node treats lib/*.js as ES modules for `node --test`; Chrome ignores it.",
+  "scripts": {
+    "test": "node --test lib/tests/"
+  },
+  "devDependencies": {
+    "fake-indexeddb": "^6.2.5"
+  }
+}

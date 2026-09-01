@@ -1,16 +1,12 @@
 {
   "manifest_version": 3,
   "name": "Meeting Saathi",
-  "version": "1.0.0",
-  "description": "Records your Google Meet calls and sends them to your local Meeting Saathi for automatic MOM/Meeting Analysis generation.",
-  "permissions": ["tabCapture", "offscreen", "storage", "activeTab", "notifications"],
+  "version": "2.0.0",
+  "description": "Records your Google Meet and generates Minutes of Meeting + a Meeting Analysis using your own Gemini API key. No account, no server — your audio goes only to your own Gemini.",
+  "permissions": ["tabCapture", "offscreen", "storage", "unlimitedStorage", "activeTab", "notifications"],
   "host_permissions": [
     "https://meet.google.com/*",
-    "http://localhost:8420/*",
-    "https://*.up.railway.app/*",
-    "https://*.trycloudflare.com/*",
-    "https://*.ngrok-free.dev/*",
-    "https://*.ngrok-free.app/*"
+    "https://generativelanguage.googleapis.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -31,6 +27,7 @@
       "128": "icon128.png"
     }
   },
+  "options_page": "settings.html",
   "commands": {
     "start-recording": {
       "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },

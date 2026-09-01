@@ -3,42 +3,51 @@
 <head>
 <meta charset="utf-8">
 <style>
-  body { font-family: -apple-system, Helvetica, Arial, sans-serif; width: 260px; padding: 12px; }
+  :root { color-scheme: light dark; }
+  body { font-family: -apple-system, Helvetica, Arial, sans-serif; width: 268px; padding: 12px; }
   h3 { margin: 0 0 8px 0; }
   .status { font-size: 0.85em; color: #555; margin-bottom: 8px; min-height: 1.2em; }
   input { width: 100%; box-sizing: border-box; padding: 6px; margin-bottom: 8px; border: 1px solid #ccc; border-radius: 4px; }
   button { width: 100%; padding: 8px; cursor: pointer; border: none; border-radius: 4px; background: #2b6cb0; color: white; font-size: 0.95em; }
+  button.secondary { background: #555; margin-top: 8px; }
   .hint { font-size: 0.72em; color: #888; margin-top: 8px; }
+  .linkrow { font-size: 0.78em; margin-top: 10px; }
+  a { color: #2b6cb0; cursor: pointer; }
+  @media (prefers-color-scheme: dark) {
+    body { color: #e8e8e8; } .status, .hint { color: #999; }
+    input { background: #2a2a2a; color: #e8e8e8; border-color: #555; }
+  }
 </style>
 </head>
 <body>
   <h3>Meeting Saathi</h3>
   <div class="status" id="status">Checking status&hellip;</div>
-  <div id="micSection" style="display: none; margin-bottom: 8px;">
+
+  <div id="apiKeyNag" hidden style="margin-bottom:8px">
+    <div class="status" style="color:#c0392b">⚠ Add your Gemini API key to start recording.</div>
+    <button id="openSettings" style="background:#c0392b">Open Settings</button>
+  </div>
+
+  <div id="micSection" hidden style="margin-bottom: 8px;">
     <div class="status" id="micStatus" style="color: #c0392b;"></div>
     <button id="grantMic" style="background: #c0392b;">Enable Microphone Access</button>
   </div>
+
   <input type="text" id="title" placeholder="Meeting title (optional)">
-  <input type="text" id="clientName" placeholder="Client / project (optional)">
   <button id="toggle">Start Recording</button>
-  <button id="openDashboard" style="margin-top: 8px;">View My Documents</button>
+  <button id="openDashboard" class="secondary">View My Documents</button>
+
   <p class="hint">
-    Chrome requires one click on this icon per meeting to start recording
-    (a browser security rule, not something we can skip) — click it right
-    after you join a call. After that, everything is automatic: it stops
-    when you leave and uploads on its own. Documents (MOM, BRD, FRD, ...)
-    aren't generated automatically anymore — open "View My Documents" and
-    click Generate on whichever ones you actually need.
+    Chrome needs one click on this icon per meeting to start recording (a
+    browser rule). After that it's automatic: it stops when you leave, then
+    transcribes and generates a Minutes of Meeting + a Meeting Analysis using
+    your own Gemini key.
   </p>
 
-  <details id="setupSection" style="margin-top: 10px;">
-    <summary style="cursor: pointer; color: #444; font-size: 0.85em;">Setup (your name)</summary>
-    <div style="margin-top: 8px;">
-      <input type="text" id="userName" placeholder="Your name">
-      <button id="saveSetup" style="background: #444;">Save</button>
-      <div class="status" id="setupStatus"></div>
-    </div>
-  </details>
+  <div class="linkrow">
+    <input type="text" id="userName" placeholder="Your name (optional — labels your voice)" style="margin-bottom:6px">
+    <a id="settingsLink">Settings</a>
+  </div>
 
   <script src="popup.js"></script>
 </body>

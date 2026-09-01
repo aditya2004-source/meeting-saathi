@@ -1,0 +1,33 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Meeting Saathi</title>
+<link rel="stylesheet" href="dashboard.css">
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Meeting Saathi</h1>
+      <p class="sub">Your meetings and documents. Everything here is stored only in this browser — nothing is uploaded to us.</p>
+    </div>
+    <div style="white-space:nowrap">
+      <button id="refreshBtn">Refresh</button>
+      <a id="settingsLink" href="settings.html" style="margin-left:10px">Settings</a>
+    </div>
+  </header>
+
+  <div id="list"><p class="empty">Loading…</p></div>
+
+  <details id="diag" style="margin-top:28px">
+    <summary style="cursor:pointer;color:var(--muted);font-size:.85rem">Diagnostics (debug log)</summary>
+    <div class="actions" style="margin:8px 0"><button id="copyLog">Copy</button><button id="clearLog">Clear</button></div>
+    <pre id="diagLog" class="transcript" style="max-height:280px">…</pre>
+  </details>
+
+  <div id="printArea"></div>
+
+  <script src="vendor/marked.min.js"></script>
+  <script type="module" src="dashboard.js"></script>
+</body>
+</html>

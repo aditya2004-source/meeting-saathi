@@ -1,0 +1,4 @@
+# Test-only dependencies. The shipped extension is plain files — Chrome never
+# loads node_modules or package-lock.json.
+node_modules/
+package-lock.json
