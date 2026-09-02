@@ -215,3 +215,53 @@ def test_usage_summary_falls_back_to_user_name_for_rows_without_device_id(tmp_pa
     assert len(summary) == 1
     assert summary[0]["user_name"] == "Rahul Verma"
     assert summary[0]["total"] == 1
+
+
+def _age_run(run_id, minutes_ago):
+    stamp = (
+        db.datetime.datetime.now(db.datetime.timezone.utc)
+        - db.datetime.timedelta(minutes=minutes_ago)
+    ).isoformat()
+    with db._connect() as conn:
+        conn.execute(
+            "UPDATE meeting_runs SET updated_at = ? WHERE id = ?", (stamp, run_id)
+        )
+
+
+def test_fail_stale_runs_fails_old_in_progress_but_spares_recent_and_terminal(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+
+    stale = db.create_run(title="orphan", audio_path="")          # state "idle"
+    db.update_run(stale["id"], state="chunk_processing")
+    _age_run(stale["id"], minutes_ago=200)
+
+    recent = db.create_run(title="live", audio_path="")
+    db.update_run(recent["id"], state="transcribing")            # updated just now
+
+    done = db.create_run(title="done", audio_path="")
+    db.update_run(done["id"], state="saved")
+    _age_run(done["id"], minutes_ago=999)
+
+    failed_before = db.create_run(title="already failed", audio_path="")
+    db.mark_failed(failed_before["id"], "boom")
+    _age_run(failed_before["id"], minutes_ago=999)
+
+    n = db.fail_stale_runs(older_than_minutes=120)
+
+    assert n == 1
+    assert db.get_run(stale["id"])["state"] == "failed"
+    assert "no activity" in db.get_run(stale["id"])["error_message"]
+    assert db.get_run(recent["id"])["state"] == "transcribing"
+    assert db.get_run(done["id"])["state"] == "saved"
+    assert db.get_run(failed_before["id"])["error_message"] == "boom"
+
+
+def test_fail_stale_runs_disabled_when_threshold_not_positive(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+
+    stale = db.create_run(title="orphan", audio_path="")
+    db.update_run(stale["id"], state="received")
+    _age_run(stale["id"], minutes_ago=10_000)
+
+    assert db.fail_stale_runs(older_than_minutes=0) == 0
+    assert db.get_run(stale["id"])["state"] == "received"

@@ -15,14 +15,13 @@ from app import db, document_generation_state
 from app import orchestrator_streaming
 from app.config import settings
 from app.docgen import registry
-from app.docgen.render_diagram import render_mermaid_to_pdf
-from app.docgen.render_pdf import markdown_to_pdf
+from app.docgen.engine import business_processes_from_facts
+from app.docgen.output import write_generated_document
 from app.orchestrator import process_recording
 from app.pipeline.download import working_dir_for
 from app.pipeline.merge import format_meeting_date, render_plain_text
 from app.pipeline.timing import load_stage_history, load_timing
 from app.progress import describe_progress
-from app.storage import write_meeting_file
 
 # A standalone handler on this specific logger (not logging.basicConfig())
 # so it's unaffected by -- and doesn't affect -- uvicorn's own logging
@@ -62,6 +61,20 @@ app.add_middleware(
     max_age=7 * 24 * 60 * 60,
     https_only=settings.session_cookie_https_only,
 )
+
+
+# One-shot orphan sweep on startup: a meeting run left in a non-terminal state
+# by a previous process (crash, `systemctl restart`, deploy) has no worker
+# thread behind it anymore and would otherwise sit "in progress" on the
+# dashboard forever. Runs here because uvicorn imports this module once at
+# startup -- same "module import == process startup" pattern as app.db's
+# own init_db() call. Threshold + disable via settings.stale_run_minutes.
+_stale_runs_failed = db.fail_stale_runs(settings.stale_run_minutes)
+if _stale_runs_failed:
+    logger.info(
+        "startup: marked %d stale in-progress meeting run(s) as failed",
+        _stale_runs_failed,
+    )
 
 
 _STAGE_HISTORY_PATH = settings.project_root / "data" / "stage_duration_history.json"
@@ -150,7 +163,7 @@ def _document_statuses(run: dict) -> list[dict]:
             status = "generating"
         elif document_generation_state.get_failure(run["id"], doc.group):
             status = "failed"
-        elif doc_key == "business_process_flow" and facts_ready and not (facts or {}).get("business_process"):
+        elif doc_key == "business_process_flow" and facts_ready and not business_processes_from_facts(facts or {}):
             status = "unavailable"
         elif not facts_ready:
             # Distinct from "not_generated" -- clicking Generate now would just
@@ -546,14 +559,7 @@ def _generate_document_group(run_id: str, group_key: str) -> None:
             return
 
         for produced_key, content in result.items():
-            doc = registry.DOCUMENTS[produced_key]
-            source_name, pdf_name = registry.filenames_for(produced_key)
-            if doc.output == "markdown":
-                write_meeting_file(folder, source_name, content["markdown_body"])
-                markdown_to_pdf(content["markdown_body"], folder / pdf_name)
-            else:
-                write_meeting_file(folder, source_name, content["mermaid_source"])
-                render_mermaid_to_pdf(content["mermaid_source"], folder / pdf_name)
+            write_generated_document(folder, produced_key, content, facts)
     except Exception as exc:  # noqa: BLE001 - one document's failure must not crash the server
         traceback.print_exc()
         document_generation_state.mark_failed(run_id, group_key, str(exc))

@@ -47,3 +47,19 @@ def test_valid_escapes_like_newline_and_tab_are_preserved():
 
     parsed = json.loads(repaired)
     assert parsed["markdown_body"] == "line one\nline two\ttabbed"
+
+
+def test_normalize_literal_newlines_collapses_over_escaped_runs():
+    from app.docgen.engine import _normalize_literal_newlines
+
+    assert _normalize_literal_newlines("a\\nb") == "a\nb"
+    assert _normalize_literal_newlines("a\\\\nb") == "a\nb"  # double-escaped
+    assert _normalize_literal_newlines("a\\\\\\nb") == "a\nb"  # triple
+    assert _normalize_literal_newlines("col1\\tcol2") == "col1\tcol2"
+
+
+def test_unescape_html_entities():
+    from app.docgen.engine import _unescape_html_entities
+
+    assert _unescape_html_entities("Purpose &amp; Scope") == "Purpose & Scope"
+    assert _unescape_html_entities("&lt;tag&gt; &quot;q&quot; &#39;a&#39;") == "<tag> \"q\" 'a'"

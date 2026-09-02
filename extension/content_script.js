@@ -46,22 +46,40 @@ function safeSendMessage(message) {
 
 // Speaker-name detection (best-effort, only runs while a recording is
 // actually in progress -- see extension/DESIGN.md for the full design and
-// its fragility caveats). Google Meet has no public API for "who's
-// speaking right now" or attendee identity, so this scrapes the visual
-// "speaking" indicator Meet applies to a participant's tile.
+// its fragility caveats). Google Meet has no public API for "who's speaking
+// right now" or attendee identity, and its class names are obfuscated and
+// carry no "speaking" token. What IS observable: the active speaker's tile
+// runs a rapid CSS animation on its audio-level bars, firing many `class`
+// mutations per second inside that participant's `[data-participant-id]`
+// tile. We detect the speaker as "whichever tile's subtree is currently
+// churning class mutations" and read the (doubled) name out of that tile.
+// Verified live against Meet's DOM on 2026-09-02.
 let recordingActive = false;
 let speakerObserver = null;
 let activeSpeakerName = null;
-let pendingSpeakerName = null;
-let pendingSpeakerTimer = null;
-const SPEAKING_INDICATOR_MIN_DURATION_MS = 300;
+
+const SPEAKER_TILE_SELECTOR = "[data-participant-id]";
+// A tile whose subtree fires >= THRESHOLD `class` mutations within WINDOW ms
+// is treated as actively speaking (the audio-bars animation). Brief cross-talk
+// blips don't sustain enough churn to cross it.
+const SPEAKER_PULSE_WINDOW_MS = 900;
+const SPEAKER_PULSE_THRESHOLD = 5;
+// Don't flip the emitted speaker faster than this (cross-talk guard)...
+const SPEAKER_SWITCH_MIN_GAP_MS = 700;
+// ...but do re-emit the current speaker at least this often, so a long
+// monologue stays within lib/transcript.js's staleness handling.
+const SPEAKER_KEEPALIVE_MS = 45 * 1000;
+
+// participantId -> recent `class`-mutation timestamps (rolling, pruned to WINDOW)
+const _tilePulseTimes = new Map();
+let _lastSpeakerEmit = { name: null, at: 0 };
 
 // The local user's own real name, learned from a People-panel roster row
 // whose text ends in "(You)" (see readPeoplePanelRoster()/scrapeRoster()
 // below). Meet's tile-speaking indicator only ever exposes "You" for the
 // local user's own tile -- without this, the local user's own turns are
 // silently dropped instead of attributed to a real name (see
-// findActiveSpeakerName() below).
+// noteTilePulse() below).
 let localUserRealName = null;
 
 // Status/badge text Meet commonly renders as a leaf node alongside (and
@@ -69,7 +87,7 @@ let localUserRealName = null;
 // a presenting/mute/pin/raised-hand indicator, or a bare role label. None
 // of these are ever a person's name; used by pickNameFromCandidates()
 // below to avoid mistaking one for the name itself. Deliberately does NOT
-// include "you" -- callers (findActiveSpeakerName(), readPeoplePanelRoster())
+// include "you" -- callers (noteTilePulse(), readPeoplePanelRoster())
 // need to see that literal value to detect the local user's own
 // tile/row and substitute their real name, rather than have it silently
 // discarded here.
@@ -265,81 +283,87 @@ function _logIsInCallVerdict(result, details) {
   console.debug("[Meeting Saathi] isInCall ->", result, details);
 }
 
-function findActiveSpeakerName() {
-  // Best-effort heuristic, NOT a stable API -- Meet's class names are
-  // obfuscated and change across releases. Anyone maintaining this must
-  // re-verify against a live call (devtools open, speak, inspect what
-  // actually toggles) before trusting it; this is the same "several
-  // independent signals, tolerate wrong guesses" philosophy as isInCall()
-  // above, just applied to a harder problem (a specific name tied to a
-  // specific moment, not a binary state).
-  //
-  // Primary signal: Meet toggles some class/attribute containing
-  // "speaking" (or an explicit data-is-speaking flag) on the actively
-  // talking participant's tile. This may not fire at all during
-  // screen-share (tiles reflow/shrink) or for off-screen/virtualized
-  // tiles when there are many participants -- both are expected
-  // degradations, not bugs; the caller falls back to "Speaker N".
-  const indicators = document.querySelectorAll(
-    '[class*="speaking" i], [data-is-speaking="true"], [aria-label*="is speaking" i]'
-  );
-  for (const indicator of indicators) {
-    const tile =
-      indicator.closest('[data-participant-id], [data-self-name], [data-participant-name], [role="listitem"]') ||
-      indicator;
-    const explicitName =
-      tile.getAttribute?.("data-self-name") || tile.getAttribute?.("data-participant-name");
-    const name = (explicitName && explicitName.trim()) || pickNameFromElement(tile);
-    if (!name) {
-      console.debug("[Meeting Saathi] findActiveSpeakerName: no name-shaped candidate in tile", tile);
-      continue;
-    }
-    // The local user's own tile is commonly labeled "You" -- never a real
-    // name to emit as-is. Substitute the real name learned from the
-    // People-panel roster scrape (see localUserRealName above) if it's
-    // known yet; otherwise skip this indicator entirely rather than
-    // silently misattributing the local user's speech to whoever spoke
-    // last (the previous behavior).
-    if (name.toLowerCase() === "you") {
-      if (localUserRealName) return localUserRealName;
-      console.debug("[Meeting Saathi] findActiveSpeakerName: local user speaking, real name not yet known");
-      continue;
-    }
-    return name;
+// Extracts the participant name from an actively-speaking tile. Verified
+// live (2026-09-02): Meet renders a video tile's name twice, newline-joined
+// ("Kailash Gupta\nKailash Gupta"). A presentation/screen-share tile that is
+// also a [data-participant-id] element instead shows icon labels
+// ("zoom_in\nZoom in\nopen_in_new\n..."), so requiring the first two lines
+// to be identical both identifies a real participant tile and hands back a
+// clean name -- and deliberately returns null for the presentation tile
+// rather than risk pulling a name out of one of its tooltips.
+function nameFromSpeakerTile(tile) {
+  const lines = (tile.innerText || "")
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (lines.length >= 2 && lines[0] && lines[0] === lines[1]) {
+    return stripNameSuffix(lines[0]);
+  }
+  if (
+    lines.length === 1 &&
+    lines[0].includes(" ") &&
+    !NAME_CANDIDATE_IGNORE_RE.test(lines[0])
+  ) {
+    return stripNameSuffix(lines[0]);
   }
   return null;
 }
 
-function onPossibleSpeakerChange() {
-  const name = findActiveSpeakerName();
-  if (name === activeSpeakerName) return;
+// Called for every `class` mutation whose target is inside a
+// [data-participant-id] tile. Counts how much class churn that tile has seen
+// in the last SPEAKER_PULSE_WINDOW_MS; once it crosses SPEAKER_PULSE_THRESHOLD
+// the tile's participant is "actively speaking" and we emit a SPEAKER_ACTIVE
+// (throttled by SPEAKER_SWITCH_MIN_GAP_MS / SPEAKER_KEEPALIVE_MS).
+function noteTilePulse(tile) {
+  const pid = tile.getAttribute("data-participant-id");
+  if (!pid) return;
+  const now = Date.now();
+  const times = (_tilePulseTimes.get(pid) || []).filter(
+    (t) => now - t < SPEAKER_PULSE_WINDOW_MS
+  );
+  times.push(now);
+  _tilePulseTimes.set(pid, times);
+  if (times.length < SPEAKER_PULSE_THRESHOLD) return;
 
-  // Debounce: require the new state to hold for a short minimum duration
-  // before trusting it, so DOM flicker/reflow doesn't emit noisy events.
-  if (pendingSpeakerTimer) clearTimeout(pendingSpeakerTimer);
-  pendingSpeakerName = name;
-  pendingSpeakerTimer = setTimeout(() => {
-    pendingSpeakerTimer = null;
-    activeSpeakerName = pendingSpeakerName;
-    if (activeSpeakerName) {
-      safeSendMessage({
-        type: "SPEAKER_ACTIVE",
-        name: activeSpeakerName,
-        atMs: Date.now(),
-      });
-    }
-  }, SPEAKING_INDICATOR_MIN_DURATION_MS);
+  let name = nameFromSpeakerTile(tile);
+  if (!name) return;
+  // The local user's own tile can read "You" -- substitute the real name
+  // learned from the People-panel scrape, or skip rather than misattribute.
+  if (name.toLowerCase() === "you") {
+    if (!localUserRealName) return;
+    name = localUserRealName;
+  }
+
+  const sameSpeaker =
+    _lastSpeakerEmit.name && normalizeKey(name) === normalizeKey(_lastSpeakerEmit.name);
+  if (sameSpeaker && now - _lastSpeakerEmit.at < SPEAKER_KEEPALIVE_MS) return;
+  if (!sameSpeaker && now - _lastSpeakerEmit.at < SPEAKER_SWITCH_MIN_GAP_MS) return;
+
+  _lastSpeakerEmit = { name, at: now };
+  activeSpeakerName = name;
+  console.log("[Meeting Saathi] active speaker:", name);
+  safeSendMessage({ type: "SPEAKER_ACTIVE", name, atMs: now });
+}
+
+function onSpeakerMutations(mutations) {
+  for (const mutation of mutations) {
+    const el = mutation.target;
+    if (!el || el.nodeType !== 1 || typeof el.closest !== "function") continue;
+    const tile = el.closest(SPEAKER_TILE_SELECTOR);
+    if (tile) noteTilePulse(tile);
+  }
 }
 
 function startSpeakerObserver() {
   if (speakerObserver) return;
   activeSpeakerName = null;
-  pendingSpeakerName = null;
-  speakerObserver = new MutationObserver(onPossibleSpeakerChange);
+  _tilePulseTimes.clear();
+  _lastSpeakerEmit = { name: null, at: 0 };
+  speakerObserver = new MutationObserver(onSpeakerMutations);
   speakerObserver.observe(document.body, {
     subtree: true,
     attributes: true,
-    attributeFilter: ["class", "data-is-speaking", "aria-label"],
+    attributeFilter: ["class"],
   });
 }
 
@@ -348,17 +372,14 @@ function stopSpeakerObserver() {
     speakerObserver.disconnect();
     speakerObserver = null;
   }
-  if (pendingSpeakerTimer) {
-    clearTimeout(pendingSpeakerTimer);
-    pendingSpeakerTimer = null;
-  }
+  _tilePulseTimes.clear();
   activeSpeakerName = null;
-  pendingSpeakerName = null;
+  _lastSpeakerEmit = { name: null, at: 0 };
 }
 
 function findPeoplePanelToggleButton() {
   // Best-effort heuristic, NOT a stable API -- same caveat as
-  // findActiveSpeakerName() above: must be re-verified against a live
+  // the speaker detection above: must be re-verified against a live
   // multi-participant call before being fully trusted.
   return (
     document.querySelector('button[aria-label*="show everyone" i]') ||
@@ -401,7 +422,7 @@ function readPeoplePanelRoster() {
 
     // This row's un-stripped text carries a "(You)" suffix -- it's the
     // local user's own row. Remember their real (suffix-stripped) name so
-    // findActiveSpeakerName() above can substitute it whenever the local
+    // noteTilePulse() above can substitute it whenever the local
     // user's tile is the one speaking, instead of silently dropping those
     // turns.
     const rowText = row.getAttribute?.("aria-label")?.trim() || row.textContent || "";

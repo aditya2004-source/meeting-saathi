@@ -11,12 +11,14 @@ from app.pipeline.diarize import diarize
 from app.pipeline.download import working_dir_for
 from app.pipeline.merge import build_transcript, render_plain_text
 from app.pipeline.roster import compute_attendees, parse_attendee_roster
+from app.reconcile import maybe_reconcile_speakers
 from app.pipeline.speaker_names import (
     fill_unresolved_with_excerpts,
     parse_speaker_events,
     resolve_speaker_names,
 )
 from app.pipeline.timing import TimingRecorder, record_stage_durations, timed
+from app.pipeline.translate import maybe_translate_segments_to_english
 from app.progress import TAIL_STAGE_KEYS
 from app.storage import create_meeting_folder, write_meeting_file
 
@@ -51,6 +53,11 @@ def _run(run_id: str) -> None:
         events = parse_speaker_events(speaker_events_path.read_text(encoding="utf-8"))
         segments = resolve_speaker_names(segments, events)
 
+    # Ensure the transcript we store is English even when a chunk fell to the
+    # AssemblyAI fallback (which has no task="translate"). One Gemini call over
+    # just the non-English segments; no-op otherwise. See app/pipeline/translate.py.
+    segments = maybe_translate_segments_to_english(segments, recorder)
+
     roster: list[str] = []
     roster_path = work_dir / "attendee_roster.json"
     if roster_path.exists():
@@ -67,6 +74,15 @@ def _run(run_id: str) -> None:
     # placeholder-shaped at this point becomes a clean "Unidentified speaker
     # N" label instead of a bare "Speaker N" reaching the final documents.
     segments, unidentified_excerpts = fill_unresolved_with_excerpts(segments)
+
+    # Recovery pass for a meeting where the DOM active-speaker scrape caught
+    # nothing and one real person is now scattered across dozens of
+    # "Unidentified speaker N" labels -- one Gemini pass collapses them back
+    # to the true participant set. No-op (zero Gemini calls) for a normal,
+    # well-diarized meeting. See app/reconcile.py.
+    segments, unidentified_excerpts, attendees = maybe_reconcile_speakers(
+        run["title"], segments, unidentified_excerpts, attendees, "\n".join(roster), recorder
+    )
 
     now = datetime.datetime.now(datetime.timezone.utc)
     transcript = build_transcript(

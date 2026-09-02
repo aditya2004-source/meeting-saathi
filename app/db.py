@@ -268,6 +268,43 @@ def mark_failed(run_id: str, error: Exception | str) -> dict[str, Any]:
     return update_run(run_id, state="failed", error_message=str(error))
 
 
+# Everything in STATES except these is an "in progress" state -- a run sitting
+# in one of those with no recent activity is orphaned (the worker thread that
+# was driving it is gone).
+_TERMINAL_STATES = ("saved", "failed")
+
+
+def fail_stale_runs(older_than_minutes: int) -> int:
+    """Mark orphaned in-progress runs as failed. Called once on server startup:
+    any non-terminal run is stranded because the thread processing it died with
+    the previous process, so it would otherwise show "in progress" on the
+    dashboard forever. The age check spares a run that a fast restart could
+    still resume via chunked_state recovery (a live recording keeps POSTing
+    chunks, which refreshes updated_at). Returns how many runs were failed.
+    `older_than_minutes <= 0` is a no-op.
+    """
+    if older_than_minutes <= 0:
+        return 0
+    cutoff = (
+        datetime.datetime.now(datetime.timezone.utc)
+        - datetime.timedelta(minutes=older_than_minutes)
+    ).isoformat()
+    message = (
+        f"Marked failed on server startup: no activity for over {older_than_minutes} "
+        "minutes and the process that was handling it is no longer running."
+    )
+    placeholders = ", ".join("?" for _ in _TERMINAL_STATES)
+    with _connect() as conn:
+        cursor = conn.execute(
+            f"""UPDATE meeting_runs
+                   SET state = 'failed', error_message = ?, updated_at = ?
+                 WHERE state NOT IN ({placeholders})
+                   AND updated_at < ?""",
+            (message, _now(), *_TERMINAL_STATES, cutoff),
+        )
+        return cursor.rowcount
+
+
 def set_client_name(run_id: str, client_name: str) -> dict[str, Any]:
     """Post-hoc "set client" edit -- most real meetings start automatically
     (the extension's popup, where the optional client-name field lives, often

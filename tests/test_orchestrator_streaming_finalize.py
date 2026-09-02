@@ -200,7 +200,7 @@ def test_finalize_run_with_no_speech_skips_gemini_and_still_saves(tmp_path, monk
     folder = Path(run_row["folder_path"])
     facts = json.loads((folder / "facts.json").read_text(encoding="utf-8"))
     assert facts["requirements"] == []
-    assert facts["business_process"] is None
+    assert facts["business_processes"] == []
 
     transcript = json.loads((folder / "transcript.json").read_text(encoding="utf-8"))
     assert transcript["segments"] == []

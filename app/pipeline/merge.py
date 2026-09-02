@@ -68,6 +68,18 @@ def _format_timestamp(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
+def render_segments_text(meeting_title: str, segments: list[SpeakerSegment]) -> str:
+    """The same `[HH:MM:SS] Speaker: text` transcript body render_plain_text()
+    produces, but straight from SpeakerSegments -- used before build_transcript()
+    (e.g. the speaker-reconciliation pass needs the full transcript text while the
+    segments are still being finalised).
+    """
+    lines = [meeting_title, ""]
+    for seg in segments:
+        lines.append(f"[{_format_timestamp(seg.start)}] {seg.speaker}: {seg.text}")
+    return "\n".join(lines)
+
+
 def render_plain_text(transcript: dict) -> str:
     lines = [transcript["meeting_title"], ""]
     for seg in transcript["segments"]:

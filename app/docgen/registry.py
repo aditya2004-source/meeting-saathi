@@ -6,10 +6,11 @@ orchestrator_streaming.py/scripts/regenerate_docs.py/app/main.py -- with the
 generation model changed to on-demand (see app/docgen/DESIGN.md and the project plan),
 one place to add a new document type instead of six.
 
-Each entry in GROUPS is one Gemini call (or, for "local" groups, one deterministic
-render with no Gemini call at all) that produces one or more documents (`produces`).
-Each entry in DOCUMENTS is one downloadable deliverable -- its own filenames, and
-which group produces it.
+Each entry in GROUPS is one Gemini call that produces one or more documents
+(`produces`). (`local` groups -- a deterministic render with no Gemini call -- are
+still supported by the dispatch, there just aren't any right now.) Each entry in
+DOCUMENTS is one downloadable deliverable -- its own filenames, and which group
+produces it.
 """
 from typing import Callable, NamedTuple, Optional
 
@@ -25,45 +26,39 @@ class Group(NamedTuple):
 class Document(NamedTuple):
     label: str
     group: str
-    output: str  # "markdown" (writes .md + .pdf) or "diagram" (writes .mmd + .pdf)
-    filename_base: str
+    filename_base: str  # every document writes <base>.md (source) + <base>.pdf
 
 
+# The active deliverable set is deliberately just these three: Minutes of
+# Meeting, Meeting Analysis, and the AS-IS Business Process Flow. SOW (and the
+# older BRD / FRD / User Stories / Acceptance Criteria) generators still exist
+# in engine.py but are intentionally left out of the catalogue below, so the
+# dashboard neither offers nor generates them. Re-add an entry here to bring a
+# document back.
 GROUPS: dict[str, Group] = {
     "mom": Group(engine.generate_mom, ("mom",), local=False),
     "meeting_analysis": Group(engine.generate_meeting_analysis, ("meeting_analysis",), local=False),
-    "brd": Group(engine.generate_brd, ("brd",), local=False),
-    "frd": Group(engine.generate_frd, ("frd",), local=True),
-    "stories_and_ac": Group(
-        engine.generate_user_stories_and_acceptance_criteria,
-        ("user_stories", "acceptance_criteria"),
-        local=False,
-    ),
     "business_process_flow": Group(
-        engine.generate_business_process_flow, ("business_process_flow",), local=True
+        engine.generate_business_process_flow, ("business_process_flow",), local=False
     ),
 }
 
 DOCUMENTS: dict[str, Document] = {
-    "mom": Document("Minutes of Meeting", "mom", "markdown", "MOM"),
-    "meeting_analysis": Document("Meeting Analysis", "meeting_analysis", "markdown", "Meeting_Analysis"),
-    "brd": Document("Business Requirements Document (BRD)", "brd", "markdown", "BRD"),
-    "frd": Document("Functional Requirements Document (FRD)", "frd", "markdown", "FRD"),
-    "user_stories": Document("User Stories", "stories_and_ac", "markdown", "User_Stories"),
-    "acceptance_criteria": Document("Acceptance Criteria", "stories_and_ac", "markdown", "Acceptance_Criteria"),
+    "mom": Document("Minutes of Meeting", "mom", "MOM"),
+    "meeting_analysis": Document("Meeting Analysis", "meeting_analysis", "Meeting_Analysis"),
     "business_process_flow": Document(
-        "Business Process Flow (AS-IS)", "business_process_flow", "diagram", "Business_Process_Flow"
+        "Business Process Flow", "business_process_flow", "Business_Process_Flow"
     ),
 }
 
 
 def filenames_for(doc_key: str) -> tuple[str, str]:
-    """(source_filename, pdf_filename) -- source is .md for a markdown document,
-    .mmd (editable Mermaid source) for a diagram.
+    """(source_filename, pdf_filename) -- every document writes a markdown source
+    (.md) and its rendered PDF. The Business Process Flow's Mermaid diagrams live
+    inside fenced ```mermaid blocks in its .md.
     """
-    doc = DOCUMENTS[doc_key]
-    source_ext = "md" if doc.output == "markdown" else "mmd"
-    return f"{doc.filename_base}.{source_ext}", f"{doc.filename_base}.pdf"
+    base = DOCUMENTS[doc_key].filename_base
+    return f"{base}.md", f"{base}.pdf"
 
 
 def group_for_document(doc_key: str) -> Group:

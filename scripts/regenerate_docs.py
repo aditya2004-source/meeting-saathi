@@ -22,8 +22,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.docgen import engine as docgen_engine  # noqa: E402
 from app.docgen import registry  # noqa: E402
-from app.docgen.render_diagram import render_mermaid_to_pdf  # noqa: E402
-from app.docgen.render_pdf import markdown_to_pdf  # noqa: E402
+from app.docgen.output import write_generated_document  # noqa: E402
 from app.pipeline.merge import render_plain_text  # noqa: E402
 from app.storage import write_meeting_file  # noqa: E402
 
@@ -70,15 +69,11 @@ def main() -> None:
             print(f"{group_key}: nothing to generate (no supporting material)")
             continue
         for produced_key, content in result.items():
-            doc = registry.DOCUMENTS[produced_key]
             source_name, pdf_name = registry.filenames_for(produced_key)
-            if doc.output == "markdown":
-                (out_dir / source_name).write_text(content["markdown_body"], encoding="utf-8")
-                markdown_to_pdf(content["markdown_body"], out_dir / pdf_name)
-            else:
-                (out_dir / source_name).write_text(content["mermaid_source"], encoding="utf-8")
-                render_mermaid_to_pdf(content["mermaid_source"], out_dir / pdf_name)
+            findings = write_generated_document(out_dir, produced_key, content, facts)
             print(f"Wrote {source_name} and {pdf_name}")
+            for finding in findings:
+                print(f"    ⚠ {finding}")
 
 
 if __name__ == "__main__":

@@ -74,6 +74,40 @@ class Settings(BaseSettings):
     # reverts to "Unknown" instead.
     speaker_event_max_staleness_seconds: float = 300.0
 
+    # Speaker reconciliation: a single recovery Gemini pass that collapses a
+    # failed diarization's many "Unidentified speaker N" labels back into the
+    # true, small participant set (see app/pipeline/speaker_reconcile.py and
+    # app/docgen/reconcile_prompt.py). Only fires when at least
+    # `speaker_reconcile_min_dominance` of the transcript (by character count)
+    # is attributed to unidentified speakers AND at least
+    # `speaker_reconcile_min_labels` distinct such labels exist -- a normal
+    # meeting the DOM scrape named correctly never comes close (its dominance
+    # stays well under `speaker_reconcile_min_dominance`), so this costs zero
+    # extra Gemini calls in the common case.
+    #
+    # `min_labels` is 2 (not the old 6): on this deployment the Meet DOM
+    # active-speaker scrape currently captures nothing, so essentially every
+    # meeting arrives with all-placeholder labels and dominance ~1.0. At 2, a
+    # normal 2-person call still gets the one recovery pass that pulls real
+    # names out of the transcript; the dominance gate is what keeps a
+    # well-diarized meeting from paying for it. One meeting/day, so the extra
+    # call is negligible. Raise this again once the DOM scrape is fixed
+    # (extension/content_script.js active-speaker selectors).
+    speaker_reconcile_enabled: bool = True
+    speaker_reconcile_min_dominance: float = 0.4
+    speaker_reconcile_min_labels: int = 2
+
+    # Quality mode: spend extra Gemini calls on getting ONE meeting's documents
+    # as right as possible, rather than minimising calls across many meetings.
+    # When on: extraction gets a second verification/gap-fill pass, and every
+    # Gemini-written document gets a refine pass against the deterministic
+    # validator's findings (see app/docgen/validate.py). Roughly doubles the
+    # per-document call count (~14-17 calls for a full 8-document set) -- sized
+    # for the free tier's 20 requests/day when the user processes one meeting a
+    # day. A call that fails (e.g. quota exhausted mid-run) leaves the
+    # un-refined version in place rather than failing the document.
+    docgen_quality_mode: bool = True
+
     # Output storage
     base_storage_dir: Path = Path.home() / "Downloads" / "Meeting Saathi"
     keep_raw_recording: bool = False
@@ -85,6 +119,17 @@ class Settings(BaseSettings):
 
     # Local service
     port: int = 8420
+
+    # On server startup, any meeting run still in a non-terminal state
+    # (idle/received/transcribing/.../chunk_processing/...) whose last update
+    # is older than this is marked "failed" -- the worker thread that was
+    # driving it died with the previous process, so it would otherwise sit
+    # "in progress" forever on the dashboard. Generous enough that a quick
+    # restart mid-meeting still lets a live chunked recording resume (the
+    # extension keeps POSTing chunks, refreshing updated_at well within this
+    # window). See app.db.fail_stale_runs(), called from app/main.py's
+    # startup hook. Set via STALE_RUN_MINUTES in .env; 0 disables the sweep.
+    stale_run_minutes: int = 120
 
     # Multi-user sharing (Phase 1: sharing with BA testers) -- each caller
     # identifies itself with a plain user_name string (no login/password),
