@@ -8,6 +8,8 @@
 
 import { cleanMarkdownBody } from "./gemini.js";
 import {
+  BUSINESS_PROCESS_FLOW_RESPONSE_SCHEMA,
+  BUSINESS_PROCESS_FLOW_SYSTEM_PROMPT,
   COMBINED_DOCS_RESPONSE_SCHEMA,
   COMBINED_DOCS_SYSTEM_PROMPT,
   MEETING_ANALYSIS_RESPONSE_SCHEMA,
@@ -25,10 +27,26 @@ const REFINE_INSTRUCTION =
   "- Fix every issue in AUTOMATED CHECK FINDINGS (if any).\n" +
   "- Make every section complete: if a section is thin but the topic clearly got " +
   "real discussion, expand it from the EXTRACTED FACTS and TRANSCRIPT (never invent).\n" +
-  "- Ensure every requirement id in extracted_facts.requirements is referenced.\n" +
+  "- This is a client-facing document: never write an internal requirement id " +
+  "(REQ-1, [REQ-3], ...), JSON field name, or bracketed tag -- use plain words.\n" +
   "- Remove anything not supported by the facts or transcript.\n" +
   "- Keep the exact section structure from your instructions; emit no heading that " +
   "isn't in that structure, no code fence, no JSON, no <|...|> marker.\n" +
+  "Return the full corrected document (same schema).\n\n";
+
+const REFINE_INSTRUCTION_WITH_DIAGRAMS =
+  "You produced the DRAFT DOCUMENT below. Produce an improved final version:\n" +
+  "- Fix every issue in AUTOMATED CHECK FINDINGS (if any).\n" +
+  "- Make every section complete: if a section is thin but the topic clearly got " +
+  "real discussion, expand it from the EXTRACTED FACTS and TRANSCRIPT (never invent).\n" +
+  "- This is a client-facing document: never write an internal requirement id, JSON " +
+  "field name, or bracketed tag -- use plain words.\n" +
+  "- Remove anything not supported by the facts or transcript.\n" +
+  "- Keep the exact section structure from your instructions.\n" +
+  "- Keep each ```mermaid diagram as a fenced ```mermaid block; keep every diagram " +
+  "dead simple and syntactically valid (about 8 nodes at most, mostly a straight " +
+  "top-to-bottom line, short quoted labels). Emit no other code fence, no JSON, no " +
+  "<|...|> marker.\n" +
   "Return the full corrected document (same schema).\n\n";
 
 /** Port of engine.py::_attendees_for_prompt. */
@@ -57,6 +75,7 @@ async function refineMarkdownDocument(client, {
   transcriptText,
   facts,
   maxOutputTokens,
+  withDiagrams = false,
   logger = console.warn,
 }) {
   const draftBody = draft.markdown_body;
@@ -65,7 +84,7 @@ async function refineMarkdownDocument(client, {
   const findings = reviewMarkdownDocument(docKey, draftBody, facts);
   const findingsBlock = findings.length ? findings.map((f) => `- ${f}`).join("\n") : "- (no automated findings)";
   const userContent =
-    `${REFINE_INSTRUCTION}` +
+    `${withDiagrams ? REFINE_INSTRUCTION_WITH_DIAGRAMS : REFINE_INSTRUCTION}` +
     `AUTOMATED CHECK FINDINGS:\n${findingsBlock}\n\n` +
     `DRAFT DOCUMENT:\n${draftBody}\n\n` +
     `EXTRACTED FACTS:\n${groundingJson}\n\n` +
@@ -98,6 +117,7 @@ export async function generateDocument(client, {
   maxOutputTokens = 8192,
   docKey = "",
   qualityMode = true,
+  withDiagrams = false,
   logger = console.warn,
 }) {
   const grounding = {
@@ -125,6 +145,7 @@ export async function generateDocument(client, {
         transcriptText,
         facts,
         maxOutputTokens,
+        withDiagrams,
         logger,
       });
     }
@@ -170,6 +191,39 @@ export async function generateMeetingAnalysis(client, { meetingTitle, meetingDat
     logger,
   });
   return { meeting_analysis: doc };
+}
+
+/**
+ * Business Process Flow (As-Is + proposed) — a prose doc with fenced ```mermaid
+ * flowchart blocks. Port of engine.py::generate_business_process_flow. Returns
+ * `{ business_process_flow: { title, markdown_body } }`.
+ */
+export async function generateBusinessProcessFlow(client, { meetingTitle, meetingDate, attendees, facts, transcriptText, qualityMode = true, logger }) {
+  if (!transcriptText || !transcriptText.trim()) {
+    return {
+      business_process_flow: placeholderDoc(
+        "Business Process Flow",
+        meetingTitle,
+        meetingDate,
+        "No speech was captured during this meeting, so there is no process to describe.",
+      ),
+    };
+  }
+  const doc = await generateDocument(client, {
+    systemPrompt: BUSINESS_PROCESS_FLOW_SYSTEM_PROMPT,
+    responseSchema: BUSINESS_PROCESS_FLOW_RESPONSE_SCHEMA,
+    meetingTitle,
+    meetingDate,
+    attendees,
+    facts,
+    transcriptText,
+    maxOutputTokens: 16384,
+    docKey: "business_process_flow",
+    qualityMode,
+    withDiagrams: true,
+    logger,
+  });
+  return { business_process_flow: doc };
 }
 
 /**

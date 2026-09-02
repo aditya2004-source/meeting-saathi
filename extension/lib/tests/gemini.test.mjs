@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import {
   GeminiClient,
   cleanMarkdownBody,
+  fixHeaderlessTables,
   normalizeLiteralNewlines,
   repairInvalidBackslashEscapes,
   stripTrailingModelNoise,
@@ -59,9 +60,25 @@ test("stripTrailingModelNoise removes a leaked control-token tail", () => {
   assert.ok(cleaned.trimEnd().endsWith("Real content here."));
 });
 
-test("cleanMarkdownBody composes all three passes", () => {
+test("cleanMarkdownBody composes all passes", () => {
   const out = cleanMarkdownBody("Heading&amp;More\\nnext line");
   assert.equal(out, "Heading&More\nnext line\n");
+});
+
+test("fixHeaderlessTables injects a header for a header-less 2-col table", () => {
+  const src = "## Meeting Overview\n| Title | Demo |\n| Date | Sept 2 |\n| Attendees | A, B |\n\n## Next";
+  const out = fixHeaderlessTables(src);
+  assert.ok(out.includes("| Field | Detail |\n| --- | --- |\n| Title | Demo |"));
+});
+
+test("fixHeaderlessTables leaves a valid table untouched", () => {
+  const src = "| Area | Today | Later |\n| --- | --- | --- |\n| Calls | manual | auto |";
+  assert.equal(fixHeaderlessTables(src), src);
+});
+
+test("fixHeaderlessTables ignores a lone pipe line that is not a table", () => {
+  const src = "Some prose with a | pipe | inside it.";
+  assert.equal(fixHeaderlessTables(src), src);
 });
 
 // --- generateJson: MAX_TOKENS retry-and-double (port of tests/test_docgen_max_tokens_retry.py) ---

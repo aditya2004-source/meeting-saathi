@@ -20,13 +20,19 @@
  */
 
 import { extractMeetingFacts, emptyMeetingFacts } from "./facts.js";
-import { generateBothDocuments } from "./generate.js";
+import { generateBothDocuments, generateBusinessProcessFlow } from "./generate.js";
 import { MEETING_STATUS } from "./idb.js";
 import { TRANSCRIBE_RESPONSE_SCHEMA, buildTranscribePrompt } from "./prompts.js";
-import { buildTranscript, formatMeetingDate } from "./transcript.js";
+import { maybeReconcileSpeakers } from "./reconcile.js";
+import { buildTranscript, formatMeetingDate, parseAttendeeRoster, renderPlainText } from "./transcript.js";
 
 export const STAGE_ORDER = ["assembling", "uploading", "transcribing", "extracting", "generating", "done"];
-export const DOC_KEYS = ["mom", "meeting_analysis"];
+export const DOC_KEYS = ["mom", "meeting_analysis", "business_process_flow"];
+export const DOC_TITLES = {
+  mom: "Minutes of Meeting",
+  meeting_analysis: "Meeting Analysis",
+  business_process_flow: "Business Process Flow",
+};
 
 // Below this, an "assembled" recording is treated as no speech (an empty WebM
 // container is a few hundred bytes; a few seconds of Opus is a few KB).
@@ -138,11 +144,36 @@ const STAGES = {
       TRANSCRIBE_MAX_TOKENS,
     );
 
-    const built = buildTranscript(raw, {
+    let built = buildTranscript(raw, {
       meetingTitle: meeting.title || "Google Meet",
       speakerEvents: meeting.speakerEvents || [],
       roster: meeting.attendeeRoster || [],
     });
+
+    // Recovery pass: if Gemini's transcription returned only generic "Speaker N"
+    // and the DOM scrape caught nothing, `built` now has "Unidentified speaker N"
+    // labels dominating. One Gemini call collapses them to the real participant
+    // set (real names where the transcript reveals them). No-op / zero calls for
+    // a meeting whose speakers are already named. Never throws.
+    const reconciled = await maybeReconcileSpeakers({
+      client,
+      meetingTitle: meeting.title || "Google Meet",
+      segments: built.segments,
+      excerpts: built.excerpts || {},
+      attendees: built.attendees || [],
+      roster: parseAttendeeRoster(meeting.attendeeRoster || []),
+      logger: mem.ctx.logger,
+    });
+    if (reconciled.segments !== built.segments) {
+      built = {
+        ...built,
+        segments: reconciled.segments,
+        attendees: reconciled.attendees,
+        excerpts: reconciled.excerpts,
+        plainText: renderPlainText({ meetingTitle: meeting.title || "Google Meet", segments: reconciled.segments }),
+      };
+    }
+
     await store.putTranscript(runId, built);
     mem.transcript = built;
 
@@ -180,42 +211,54 @@ const STAGES = {
     // Too short / no speech → placeholder docs, zero Gemini calls.
     if (meeting.noSpeech) {
       const note = meeting.tooShort
-        ? `This meeting was under ${MIN_MEETING_SECONDS} seconds — too short to generate minutes or an analysis.`
+        ? `This meeting was under ${MIN_MEETING_SECONDS} seconds — too short to generate documents.`
         : "No speech was captured during this meeting, so there is nothing to summarize.";
       for (const docKey of DOC_KEYS) {
         if (await store.getDocument(runId, docKey)) continue;
-        const title = docKey === "mom" ? "Minutes of Meeting" : "Meeting Analysis";
+        const title = DOC_TITLES[docKey] || docKey;
         await store.putDocument(runId, docKey, { title, markdown: `# ${title} — ${meeting.title || "Google Meet"}\n\n${note}\n` });
       }
       return;
     }
 
-    // Resume skips generation entirely if BOTH docs are already stored.
-    if ((await store.getDocument(runId, "mom")) && (await store.getDocument(runId, "meeting_analysis"))) return;
+    // Resume skips generation entirely if EVERY doc is already stored.
+    const stored = await Promise.all(DOC_KEYS.map((k) => store.getDocument(runId, k)));
+    if (stored.every(Boolean)) return;
 
     const transcript = mem.transcript || (await store.getTranscript(runId)) || { plainText: "" };
     const facts = mem.facts || meeting.facts || emptyMeetingFacts();
     const meetingDate = formatMeetingDate(meeting.startedAt) || meeting.startedAt || "";
     const short = wordCount(transcript.plainText) < SHORT_TRANSCRIPT_WORDS;
-
-    // ONE call produces both documents (a third of the old cost).
-    const docs = await generateBothDocuments(client, {
+    const qualityMode = mem.ctx.qualityMode !== false && !short;
+    const common = {
       meetingTitle: meeting.title || "Google Meet",
       meetingDate,
       attendees: transcript.attendees || [],
       facts,
       transcriptText: transcript.plainText || "",
-      qualityMode: mem.ctx.qualityMode !== false && !short,
+      qualityMode,
       logger: mem.ctx.logger,
-    });
+    };
 
-    for (const docKey of DOC_KEYS) {
-      const doc = docs[docKey] || {};
-      await store.putDocument(runId, docKey, {
-        title: doc.title || (docKey === "mom" ? "Minutes of Meeting" : "Meeting Analysis"),
+    // ONE call produces MOM + Meeting Analysis; Business Process Flow is its own
+    // call (prose + mermaid, a different shape). Serialised, not parallel, to stay
+    // gentle on the free-tier rate limit.
+    if (!stored[0] || !stored[1]) {
+      const docs = await generateBothDocuments(client, common);
+      for (const docKey of ["mom", "meeting_analysis"]) {
+        const doc = docs[docKey] || {};
+        await store.putDocument(runId, docKey, { title: doc.title || DOC_TITLES[docKey], markdown: doc.markdown_body || "" });
+        mem.ctx.send?.("PROCESSING_PROGRESS", { runId, stage: "generating", docKey, pct: 88 });
+      }
+    }
+    if (!stored[2]) {
+      const bpf = await generateBusinessProcessFlow(client, common);
+      const doc = bpf.business_process_flow || {};
+      await store.putDocument(runId, "business_process_flow", {
+        title: doc.title || DOC_TITLES.business_process_flow,
         markdown: doc.markdown_body || "",
       });
-      mem.ctx.send?.("PROCESSING_PROGRESS", { runId, stage: "generating", docKey, pct: 92 });
+      mem.ctx.send?.("PROCESSING_PROGRESS", { runId, stage: "generating", docKey: "business_process_flow", pct: 95 });
     }
   },
 

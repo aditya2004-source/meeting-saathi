@@ -58,14 +58,23 @@ test("an untemplated doc_key only gets leak + citation checks", () => {
 test("a clean MOM has no findings", () => {
   const heads = [
     "Meeting Overview",
-    "Agenda / Topics Covered",
-    "Discussion Summary",
+    "Discussion Highlights",
     "Decisions",
     "Action Items",
-    "Commitments",
-    "Open Points / Parking Lot",
+    "Open Questions",
     "Next Steps",
   ];
   const body = heads.map((h) => `## ${h}\nReal content for ${h}.`).join("\n\n");
   assert.deepEqual(reviewMarkdownDocument("mom", body, { requirements: [] }), []);
+});
+
+test("a Business Process Flow with valid mermaid fences is not flagged for a stray fence", () => {
+  const body = [
+    "## Business Summary\nWhat the team does.",
+    "## How It Works Today\n1. Step one.\n\n```mermaid\nflowchart TD\nA[\"Step one\"] --> B[\"Step two\"]\n```",
+    "## Key Pain Points\n- It is slow.",
+    "## Proposed Way of Working\nNot discussed in this meeting.",
+    "## What Changes\nNot discussed in this meeting.",
+  ].join("\n\n");
+  assert.deepEqual(reviewMarkdownDocument("business_process_flow", body, { requirements: [] }), []);
 });

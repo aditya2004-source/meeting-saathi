@@ -11,12 +11,18 @@
 const REQUIRED_HEADINGS = {
   mom: [
     "Meeting Overview",
-    "Agenda / Topics Covered",
-    "Discussion Summary",
+    "Discussion Highlights",
     "Decisions",
     "Action Items",
-    "Open Points / Parking Lot",
+    "Open Questions",
     "Next Steps",
+  ],
+  business_process_flow: [
+    "Business Summary",
+    "How It Works Today",
+    "Key Pain Points",
+    "Proposed Way of Working",
+    "What Changes",
   ],
   brd: [
     "1. Document Control",
@@ -95,7 +101,19 @@ export function reviewMarkdownDocument(docKey, markdown, facts) {
   const findings = [];
   const text = markdown || "";
 
+  // The Business Process Flow doc legitimately contains fenced ```mermaid blocks,
+  // so a bare closing ``` is expected there -- flag a fence only if the fences are
+  // unbalanced or one opens a non-mermaid block.
+  const allowsMermaid = docKey === "business_process_flow";
   for (const [pattern, label] of LEAK_PATTERNS) {
+    if (allowsMermaid && label === "stray code fence") {
+      const fenceLines = [...text.matchAll(/^\s*```([a-z]*)\s*$/gim)].map((m) => m[1]);
+      const openers = fenceLines.filter(Boolean);
+      if (fenceLines.length % 2 !== 0 || openers.some((f) => f !== "mermaid")) {
+        findings.push(`Leaked artifact: ${label}.`);
+      }
+      continue;
+    }
     if (pattern.test(text)) findings.push(`Leaked artifact: ${label}.`);
   }
 

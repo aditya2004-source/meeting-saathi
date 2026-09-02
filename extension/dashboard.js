@@ -12,7 +12,34 @@ const focusRunId = new URLSearchParams(location.search).get("m");
 const DOC_META = [
   ["mom", "Minutes of Meeting", "MOM"],
   ["meeting_analysis", "Meeting Analysis", "Meeting_Analysis"],
+  ["business_process_flow", "Business Process Flow", "Business_Process_Flow"],
 ];
+const MERMAID_DOCS = new Set(["business_process_flow"]);
+
+// Disable Mermaid's DOMContentLoaded auto-run: it would render each pre.mermaid
+// to an <svg>, and a later render pass would then read that SVG's text back as
+// diagram source and fail. We call mermaid.run() explicitly instead. (This
+// module executes before DOMContentLoaded, so the config lands in time.)
+if (window.mermaid) {
+  try {
+    window.mermaid.initialize({ startOnLoad: false, securityLevel: "strict", theme: "neutral" });
+  } catch {
+    /* mermaid missing / older build — BPF diagrams just won't render */
+  }
+}
+
+/** Render every un-processed <pre class="mermaid"> inside `root`. Never throws —
+ *  a bad diagram falls back to Mermaid's own inline error graphic. */
+async function renderMermaidIn(root) {
+  if (!window.mermaid || !root) return;
+  const nodes = [...root.querySelectorAll("pre.mermaid:not([data-processed])")];
+  if (!nodes.length) return;
+  try {
+    await window.mermaid.run({ nodes, suppressErrors: true });
+  } catch {
+    /* leave the raw fence text visible rather than blow up the page */
+  }
+}
 const STAGE_PCT = { assembling: 8, uploading: 22, transcribing: 45, extracting: 65, generating: 85, done: 100 };
 
 let store = null;
@@ -61,9 +88,26 @@ function sanitize(html) {
   return tpl.innerHTML;
 }
 
-function renderMarkdown(md) {
-  const raw = window.marked ? window.marked.parse(md || "", { gfm: true, breaks: false }) : (md || "");
-  return sanitize(raw);
+const MERMAID_FENCE_RE = /(?:^|\n)[ \t]*```mermaid[ \t]*\n([\s\S]*?)\n[ \t]*```[ \t]*(?=\n|$)/g;
+
+function renderMarkdown(md, { mermaid = false } = {}) {
+  let source = md || "";
+  const diagrams = [];
+  if (mermaid) {
+    source = source.replace(MERMAID_FENCE_RE, (_m, body) => {
+      diagrams.push(body);
+      return `\n\n@@MERMAID_${diagrams.length - 1}@@\n\n`;
+    });
+  }
+  const raw = window.marked ? window.marked.parse(source, { gfm: true, breaks: false }) : source;
+  let html = sanitize(raw);
+  if (diagrams.length) {
+    html = html.replace(/<p>\s*@@MERMAID_(\d+)@@\s*<\/p>|@@MERMAID_(\d+)@@/g, (_m, a, b) => {
+      const src = diagrams[Number(a ?? b)] || "";
+      return `<pre class="mermaid">${esc(src)}</pre>`;
+    });
+  }
+  return html;
 }
 
 // --------------------------------------------------------------------- helpers
@@ -93,8 +137,9 @@ function downloadText(filename, text) {
   setTimeout(() => URL.revokeObjectURL(a.href), 2000);
 }
 
-function savePdf(titleHtml, bodyHtml) {
+async function savePdf(titleHtml, bodyHtml) {
   printArea.innerHTML = `<h1>${titleHtml}</h1>` + bodyHtml;
+  await renderMermaidIn(printArea);
   document.body.classList.add("print-mode");
   const cleanup = () => {
     document.body.classList.remove("print-mode");
@@ -173,7 +218,9 @@ async function cardBody(m, db) {
     paneHtml = `<div class="transcript">${esc(transcript?.plainText || "(no transcript)")}</div>`;
   } else {
     const doc = docs[tab];
-    paneHtml = doc ? `<div class="doc">${renderMarkdown(doc.markdown)}</div>` : `<p class="stage">This document isn't available.</p>`;
+    paneHtml = doc
+      ? `<div class="doc">${renderMarkdown(doc.markdown, { mermaid: MERMAID_DOCS.has(tab) })}</div>`
+      : `<p class="stage">This document isn't available.</p>`;
   }
 
   const renameHtml = renaming.has(m.runId) ? renameFormHtml(m.runId, transcript) : "";
@@ -261,6 +308,7 @@ async function render() {
     frag.appendChild(div);
   }
   listEl.replaceChildren(frag);
+  await renderMermaidIn(listEl);
 }
 
 // --------------------------------------------------------------------- actions
@@ -310,7 +358,7 @@ async function handleAction(action, runId, extra) {
     }
     case "save-pdf": {
       const doc = await db.getDocument(runId, extra.tab);
-      if (doc) savePdf(esc(doc.title || ""), renderMarkdown(doc.markdown));
+      if (doc) await savePdf(esc(doc.title || ""), renderMarkdown(doc.markdown, { mermaid: MERMAID_DOCS.has(extra.tab) }));
       return;
     }
     case "open-rename":

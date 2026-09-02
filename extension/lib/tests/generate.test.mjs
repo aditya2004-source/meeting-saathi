@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-import { attendeesForPrompt, generateDocument, generateMeetingAnalysis, generateMom, placeholderDoc } from "../generate.js";
+import {
+  attendeesForPrompt,
+  generateBusinessProcessFlow,
+  generateDocument,
+  generateMeetingAnalysis,
+  generateMom,
+  placeholderDoc,
+} from "../generate.js";
 import { silentLogger, StubClient } from "./stubclient.mjs";
 
 const FACTS = { requirements: [{ id: "REQ-1" }], topics_discussed: ["Pricing"] };
@@ -90,4 +97,24 @@ test("generateMeetingAnalysis wraps the doc under the meeting_analysis key", asy
   const client = new StubClient([draft]);
   const out = await generateMeetingAnalysis(client, { ...BASE, qualityMode: false });
   assert.ok(out.meeting_analysis.markdown_body.includes("Executive Snapshot"));
+});
+
+test("generateBusinessProcessFlow wraps the doc, keeps its mermaid fence, and refines with the diagram-aware instruction", async () => {
+  const body =
+    "## Business Summary\nWhat the team does.\n\n## How It Works Today\n1. Step.\n\n```mermaid\nflowchart TD\nA --> B\n```\n";
+  const draft = { title: "BPF", markdown_body: body };
+  const refined = { title: "BPF", markdown_body: body + "\n## Key Pain Points\n- It is slow, and this expanded draft is long enough to be kept by the refine guard." };
+  const client = new StubClient([draft, refined]);
+  const out = await generateBusinessProcessFlow(client, { ...BASE, qualityMode: true });
+  assert.ok(out.business_process_flow.markdown_body.includes("```mermaid"));
+  assert.equal(client.calls.length, 2);
+  assert.ok(client.calls[1].userContent.startsWith("You produced the DRAFT"));
+  assert.ok(/keep each ```mermaid diagram/i.test(client.calls[1].userContent));
+});
+
+test("generateBusinessProcessFlow returns a placeholder for an empty transcript without calling Gemini", async () => {
+  const client = new StubClient([]);
+  const out = await generateBusinessProcessFlow(client, { ...BASE, transcriptText: "  " });
+  assert.equal(client.calls.length, 0);
+  assert.ok(out.business_process_flow.markdown_body.includes("No speech was captured"));
 });

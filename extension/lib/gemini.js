@@ -100,9 +100,45 @@ export function stripTrailingModelNoise(text) {
   return t.trim() ? t.replace(/\s+$/, "") + "\n" : t;
 }
 
+const PIPE_ROW_RE = /^\s*\|.*\|\s*$/;
+const PIPE_SEP_RE = /^\s*\|(?:\s*:?-{2,}:?\s*\|)+\s*$/;
+
+/**
+ * Port of engine.py::_fix_headerless_tables. Gemini often emits a key/value table
+ * with no header + separator row, which marked() then renders as literal pipe
+ * text. For any run of 2+ consecutive pipe rows with no separator, insert a
+ * `| Field | Detail |` / `| --- | --- |` header (2-col) or a blank header of the
+ * right width (wider).
+ */
+export function fixHeaderlessTables(text) {
+  const lines = String(text).split("\n");
+  const out = [];
+  let i = 0;
+  while (i < lines.length) {
+    if (PIPE_ROW_RE.test(lines[i])) {
+      let j = i;
+      while (j < lines.length && PIPE_ROW_RE.test(lines[j])) j++;
+      const block = lines.slice(i, j);
+      if (block.length >= 2 && !block.some((b) => PIPE_SEP_RE.test(b))) {
+        const cols = (block[0].trim().replace(/^\||\|$/g, "").match(/\|/g) || []).length + 1;
+        out.push(cols === 2 ? "| Field | Detail |" : "|" + " |".repeat(cols));
+        out.push("|" + " --- |".repeat(cols));
+      }
+      out.push(...block);
+      i = j;
+      continue;
+    }
+    out.push(lines[i]);
+    i++;
+  }
+  return out.join("\n");
+}
+
 /** Port of engine.py::_clean_markdown_body. */
 export function cleanMarkdownBody(text) {
-  return stripTrailingModelNoise(unescapeHtmlEntities(normalizeLiteralNewlines(text)));
+  return fixHeaderlessTables(
+    stripTrailingModelNoise(unescapeHtmlEntities(normalizeLiteralNewlines(text))),
+  );
 }
 
 // ---------------------------------------------------------------------------

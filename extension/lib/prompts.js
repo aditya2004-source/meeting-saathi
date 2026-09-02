@@ -54,9 +54,9 @@ function groundingRule(allowMermaid = false) {
   } else {
     fenceClause = "Never emit a code fence, JSON, or any `<|...|>` marker.";
     finishClause =
-      "- Before finishing: check that every item in " +
-      "`extracted_facts.requirements` appears, every heading is present, and " +
-      "nothing in the document is unsupported by the inputs.";
+      "- Before finishing: check that every heading is present, the points actually " +
+      "discussed are all covered, and nothing in the document is unsupported by the " +
+      "inputs.";
   }
   return `GROUNDING -- non-negotiable:
 - Use ONLY the extracted facts and transcript given below. Never invent a name, date,
@@ -69,8 +69,9 @@ function groundingRule(allowMermaid = false) {
 - Some transcript speaker labels are \`Unidentified speaker N\` -- copy such a label
   verbatim (with its number) every time; never shorten, merge, or replace it with a
   guessed name.
-- Every requirement has a stable \`id\` (e.g. REQ-3). Cite that id wherever you
-  reference the requirement, so it can be cross-checked against the other documents.
+- This is a client-facing document. NEVER write an internal requirement id such as
+  "REQ-1", "REQ-12", or "[REQ-3]" -- describe the requirement in plain words instead.
+  Internal ids, JSON field names, and bracketed tags must not appear in the output.
 - If a required section has no supporting material, write exactly
   "Not discussed in this meeting." under it -- do not pad, and do not omit the
   heading.
@@ -81,6 +82,7 @@ ${LANGUAGE_RULE}`;
 }
 
 const GROUNDING_RULE = groundingRule(false);
+const GROUNDING_RULE_MERMAID = groundingRule(true);
 
 const PRODUCT_GROUPING_RULE =
   "If the meeting covered more than one distinct product or solution, separate the " +
@@ -228,45 +230,42 @@ ${NO_INVENTION}
 
 export const MOM_SYSTEM_PROMPT = `${BA_VOICE}
 
-Write the Minutes of Meeting. Use EXACTLY these headings, in this order:
+Write clear, concise Minutes of Meeting a reader can scan in two minutes. Keep it
+plain and uncluttered -- short sentences, no jargon, no internal codes. Use EXACTLY
+these headings, in this order:
 
 ## Meeting Overview
-A short table: Title, Date & Time (verbatim from meeting_date), Purpose (from
-\`meeting_purpose\`, else a one-line summary), Attendees (from the authoritative
-attendees list; add each person's role/organisation only where the facts make it
-clear).
+A two-column Markdown table. It MUST begin with the header row \`| Field | Detail |\`
+and the separator row \`| --- | --- |\`, then exactly these four data rows: Title;
+Date & Time (verbatim from meeting_date); Purpose (from \`meeting_purpose\`, else one
+plain line); Attendees (the authoritative attendees list, comma-separated -- add a
+person's role or company only where the facts make it clear).
 
-## Agenda / Topics Covered
-A bullet list naming every item in \`extracted_facts.topics_discussed\` -- one bullet
-each, no merging, no dropping.
-
-## Discussion Summary
-One \`### \` sub-section per topic (same topics, same order). Under each: what was
-discussed, the substantive points made, and any figures or examples given. Where the
-extracted facts are thin for a topic that clearly got real airtime, draw the
-substance from the transcript itself (still no invention). Completeness first -- a
-long meeting produces long minutes.
+## Discussion Highlights
+One \`### \` sub-section per topic in \`extracted_facts.topics_discussed\` (same topics,
+same order). Under each heading write 2-4 plain sentences: what was discussed and the
+key points, figures, or examples. Be concise -- capture the substance, not every
+sentence. Where the facts are thin for a topic that clearly got real airtime, draw
+the substance from the transcript (still no invention).
 
 ## Decisions
-A table: # | Decision | Made by | Rationale / context. One row per
-\`extracted_facts.decisions\` entry. "Not discussed in this meeting." if none.
+A plain bullet list -- one bullet per \`extracted_facts.decisions\` entry, phrased as
+"<the decision> (decided by <name>)". "Not discussed in this meeting." if none.
 
 ## Action Items
-A table: # | Action | Owner | Due date | Related requirement. One row per
-\`extracted_facts.action_items\` entry (Owner = "Unassigned" if null; Due =
-"Not specified" if null). "Not discussed in this meeting." if none.
+A plain bullet list -- one bullet per \`extracted_facts.action_items\` AND per
+\`extracted_facts.commitments\` entry, phrased as "<the action> -- <owner>, by <due
+date>" (use "owner not assigned" / "no date set" when the facts don't say).
+"Not discussed in this meeting." if none.
 
-## Commitments
-One line per \`extracted_facts.commitments\` entry (who committed what, to whom, by
-when). Omit this heading's content with "Not discussed in this meeting." if none.
-
-## Open Points / Parking Lot
-Bullet list from \`extracted_facts.open_questions\` -- questions raised but not resolved.
+## Open Questions
+A plain bullet list from \`extracted_facts.open_questions\` -- questions raised but not
+resolved. "None." if there are none.
 
 ## Next Steps
-A short, plain-English bullet list of what happens after this meeting, consolidated
-from the decisions, action items, and commitments. "Not discussed in this meeting."
-if the meeting gave no forward direction.
+A short plain bullet list of what happens after this meeting, drawn from the
+decisions, action items, and commitments. "Not discussed in this meeting." if the
+meeting gave no forward direction.
 
 ${PRODUCT_GROUPING_RULE}
 
@@ -310,32 +309,30 @@ export const COMBINED_DOCS_SYSTEM_PROMPT = `${BA_VOICE}
 Produce BOTH client-facing documents for this meeting in one JSON object with keys
 \`mom\` and \`meeting_analysis\`, each { "title": ..., "markdown_body": ... }.
 
-=== mom (Minutes of Meeting) — markdown_body uses EXACTLY these headings, in order:
+=== mom (Minutes of Meeting) — clear and concise, scannable in two minutes, no
+jargon, no internal codes. markdown_body uses EXACTLY these headings, in order:
 ## Meeting Overview
-A short table: Title, Date & Time (verbatim from meeting_date), Purpose (from
-\`meeting_purpose\`, else a one-line summary), Attendees (from the authoritative
-attendees list; role/organisation only where the facts make it clear).
-## Agenda / Topics Covered
-A bullet naming every \`extracted_facts.topics_discussed\` item — no merging/dropping.
-## Discussion Summary
-One \`### \` sub-section per topic (same topics, same order): what was discussed, the
-substantive points, any figures/examples. Where facts are thin for a topic that got
-real airtime, draw from the transcript (no invention). Completeness first.
+A two-column Markdown table starting with \`| Field | Detail |\` then \`| --- | --- |\`,
+then four rows: Title; Date & Time (verbatim from meeting_date); Purpose (from
+\`meeting_purpose\`, else one plain line); Attendees (comma-separated authoritative
+list; role/company only where the facts make it clear).
+## Discussion Highlights
+One \`### \` sub-section per \`extracted_facts.topics_discussed\` item (same order):
+2-4 plain sentences on what was discussed and the key points/figures. Concise -- the
+substance, not every sentence. Thin facts for a topic that got real airtime → draw
+from the transcript (no invention).
 ## Decisions
-Table: # | Decision | Made by | Rationale / context — one row per
-\`extracted_facts.decisions\`. "Not discussed in this meeting." if none.
+Plain bullet list — one per \`extracted_facts.decisions\`, as
+"<decision> (decided by <name>)". "Not discussed in this meeting." if none.
 ## Action Items
-Table: # | Action | Owner | Due date | Related requirement — one row per
-\`extracted_facts.action_items\` (Owner "Unassigned" / Due "Not specified" if null).
-"Not discussed in this meeting." if none.
-## Commitments
-One line per \`extracted_facts.commitments\` (who committed what, to whom, by when).
-"Not discussed in this meeting." if none.
-## Open Points / Parking Lot
-Bullet list from \`extracted_facts.open_questions\`.
+Plain bullet list — one per \`extracted_facts.action_items\` and per
+\`extracted_facts.commitments\`, as "<action> -- <owner>, by <due date>" ("owner not
+assigned" / "no date set" when unknown). "Not discussed in this meeting." if none.
+## Open Questions
+Plain bullet list from \`extracted_facts.open_questions\`. "None." if none.
 ## Next Steps
-Short plain-English bullets of what happens next, consolidated from decisions/action
-items/commitments. "Not discussed in this meeting." if no forward direction.
+Short plain bullets of what happens next, from decisions/action items/commitments.
+"Not discussed in this meeting." if no forward direction.
 
 === meeting_analysis (Meeting Analysis) — markdown_body uses EXACTLY these headings:
 ## Executive Snapshot
@@ -365,6 +362,60 @@ export const COMBINED_DOCS_RESPONSE_SCHEMA = {
   },
   required: ["mom", "meeting_analysis"],
 };
+
+// ---------------------------------------------------------------------------
+// Business Process Flow (As-Is + proposed) — port of generate_prompt.py
+// ---------------------------------------------------------------------------
+
+export const BUSINESS_PROCESS_FLOW_SYSTEM_PROMPT = `${BA_VOICE}
+
+Explain, in plain language a non-technical reader immediately understands, how this
+part of the business works today -- and, ONLY if the meeting actually discussed or
+demonstrated a proposed new way of working, how it would work after. Keep every
+diagram dead simple. Use EXACTLY these headings, in this order:
+
+## Business Summary
+2-4 plain sentences: what this area of the business does and who is involved. From
+\`meeting_purpose\`, \`topics_discussed\`, and \`current_state\`.
+
+## How It Works Today
+A short numbered walk-through of the current process (4-8 steps, plain phrasing),
+then ONE fenced \`\`\`mermaid flowchart of the same steps. Draw from
+\`extracted_facts.business_processes\` (primary source), \`extracted_facts.current_state\`,
+and the transcript.
+
+## Key Pain Points
+3-6 bullets -- only problems actually voiced in the meeting. From \`current_state\`
+pain points, \`extracted_facts.risks\`, and the transcript.
+"Not discussed in this meeting." if none.
+
+## Proposed Way of Working
+ONLY if the meeting actually discussed or demonstrated a proposed solution or process
+change (for example a vendor demo). Then: a short plain-language description of what
+changes, then ONE fenced \`\`\`mermaid flowchart of the proposed process -- strictly
+from \`topics_discussed\`, \`extracted_facts.requirements\`,
+\`extracted_facts.systems_and_integrations\`, and the transcript. Never invent a future
+step. If no new way of working was discussed, write exactly
+"Not discussed in this meeting." under this heading and nothing else.
+
+## What Changes
+ONLY if "Proposed Way of Working" has real content: a short list or a 2-column table
+(Today -> Proposed) of the meaningful differences. Otherwise write exactly
+"Not discussed in this meeting."
+
+Every Mermaid diagram MUST be dead simple:
+- Start with \`flowchart TD\`. At most about 8 nodes.
+- Prefer one straight top-to-bottom line of steps.
+- Use a decision node like X{{"Approved?"}} ONLY where the meeting described a real
+  either/or; label its edges in plain words (for example: -->|approved|).
+- Node labels are short plain-language phrases (3-6 words), each wrapped in double
+  quotes, for example A["Receive customer enquiry"].
+- No role annotations, no input/output sub-lines, no <br/>, no subgraph, no
+  classDef or styling, no side notes. Put nothing but valid Mermaid inside the fence.
+
+${PRODUCT_GROUPING_RULE}
+
+${GROUNDING_RULE_MERMAID}`;
 
 // ---------------------------------------------------------------------------
 // Transcription (T1)
@@ -422,6 +473,83 @@ export const TRANSCRIBE_RESPONSE_SCHEMA = {
     notes: { type: "STRING" },
   },
   required: ["segments"],
+};
+
+// ---------------------------------------------------------------------------
+// Speaker reconciliation (recovery pass — port of reconcile_prompt.py)
+// ---------------------------------------------------------------------------
+
+// When Gemini's transcription returns only generic "Speaker N" and the DOM
+// active-speaker scrape captured nothing, buildTranscript() ends up with a set
+// of "Unidentified speaker N" labels. This one call reads the whole transcript
+// back and maps every such label to a real participant, assigning a real name
+// only where the transcript unambiguously reveals it (self-intros, forms of
+// address), else a stable "Participant N".
+export const RECONCILE_SYSTEM_PROMPT = `You are the speaker-reconciliation layer for Meeting
+Saathi. You are given the full transcript of ONE business meeting in which automatic
+speaker diarization failed: a single real person is scattered across many different
+"Unidentified speaker N" labels.
+
+YOUR JOB
+Work out how many real people actually spoke, and map EVERY "Unidentified speaker N"
+label in the transcript to one of them.
+
+HOW TO DECIDE WHO IS WHO
+- Conversational continuity: consecutive lines that answer each other, finish a
+  sentence, or hold one point of view are usually the same person.
+- Forms of address: when someone is addressed by name ("Mustafa bhai", "Dhaval ji",
+  "Aditya"), the person being replied to is very likely that named person.
+- Self-introduction ("this is X from Y", "I'm X").
+- Role/side: a client asking questions vs. a vendor demoing; a presenter driving the
+  agenda vs. participants reacting.
+- Real meetings usually have 2-8 distinct speakers, not dozens. Prefer the smallest
+  participant set the transcript actually supports.
+
+NAMING RULES -- STRICT
+- Assign a real name ONLY when the transcript unambiguously reveals it (addressed by
+  that name, or self-introduced). Never guess or invent a name.
+- With a real first name, use it as the canonical label; add a side/company in
+  parentheses only if the transcript makes it clear ("Mustafa (Imdadi BuildMart)").
+- With no real name, use a stable role label "Participant 1", "Participant 2", ... in
+  order of first appearance, optionally with a side you are confident about.
+
+OUTPUT RULES
+- Return a \`participants\` list -- one entry per real person, usually 2-8.
+- \`speaker_numbers\` is the list of integer N values ("Unidentified speaker N") that
+  are that person. Every N in the transcript appears in exactly ONE participant.
+- If you genuinely cannot tell who a label is, give it its own "Participant N" entry.
+- No prose, no per-speaker explanations.
+- ${LANGUAGE_RULE}
+`;
+
+export const RECONCILE_RESPONSE_SCHEMA = {
+  type: "OBJECT",
+  properties: {
+    participants: {
+      type: "ARRAY",
+      description: "One entry per real person who spoke (usually 2-8).",
+      items: {
+        type: "OBJECT",
+        properties: {
+          canonical_label: {
+            type: "STRING",
+            description: 'A real first name (optionally "Name (Side)"), or "Participant N".',
+          },
+          is_real_name: {
+            type: "BOOLEAN",
+            description: "True only if canonical_label is a name the transcript unambiguously revealed.",
+          },
+          speaker_numbers: {
+            type: "ARRAY",
+            items: { type: "INTEGER" },
+            description: 'The N values ("Unidentified speaker N") that are this person.',
+          },
+        },
+        required: ["canonical_label", "is_real_name", "speaker_numbers"],
+      },
+    },
+  },
+  required: ["participants"],
 };
 
 // ---------------------------------------------------------------------------
@@ -758,3 +886,4 @@ export const DOCUMENT_RESPONSE_SCHEMA = {
 
 export const MOM_RESPONSE_SCHEMA = DOCUMENT_RESPONSE_SCHEMA;
 export const MEETING_ANALYSIS_RESPONSE_SCHEMA = DOCUMENT_RESPONSE_SCHEMA;
+export const BUSINESS_PROCESS_FLOW_RESPONSE_SCHEMA = DOCUMENT_RESPONSE_SCHEMA;

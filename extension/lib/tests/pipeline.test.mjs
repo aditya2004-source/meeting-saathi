@@ -24,7 +24,7 @@ async function seedMeeting(store, { runId = "r", bytes = 8000, ...rest } = {}) {
  *  so the previous stage is fully committed). */
 class FakeClient {
   constructor() {
-    this.counts = { uploadFile: 0, getFile: 0, deleteFile: 0, transcribe: 0, extractCore: 0, extractVerify: 0, extractContext: 0, mom: 0, analysis: 0, refine: 0 };
+    this.counts = { uploadFile: 0, getFile: 0, deleteFile: 0, transcribe: 0, extractCore: 0, extractVerify: 0, extractContext: 0, mom: 0, analysis: 0, refine: 0, bpf: 0, bpfRefine: 0, reconcile: 0 };
     this.failAt = null;
   }
   _die(tag) {
@@ -59,10 +59,10 @@ class FakeClient {
         segments: this.shortTranscript
           ? [{ start_seconds: 0, end_seconds: 3, speaker: "Speaker 1", text: "Hi, can you hear me? Ok bye." }]
           : [
-              { start_seconds: 0, end_seconds: 12, speaker: "Speaker 1", text: long },
-              { start_seconds: 13, end_seconds: 18, speaker: "Speaker 2", text: "Glad to be here, thanks for setting this up." },
+              { start_seconds: 0, end_seconds: 12, speaker: "Priya", text: long },
+              { start_seconds: 13, end_seconds: 18, speaker: "Sam", text: "Glad to be here, thanks for setting this up." },
             ],
-        attendees: ["Speaker 1", "Speaker 2"],
+        attendees: this.shortTranscript ? ["Speaker 1"] : ["Priya", "Sam"],
       };
     }
     const s = String(sys || "");
@@ -97,6 +97,22 @@ class FakeClient {
         meeting_analysis: { title: "Analysis", markdown_body: "## Executive Snapshot\n" + "draft ".repeat(80) },
       };
     }
+    // Business Process Flow: its own generateDocument call (+ a diagram-aware refine)
+    if (s.includes("## Business Summary")) {
+      if (draft) {
+        this.counts.bpfRefine++;
+        return { title: "BPF", markdown_body: "## Business Summary\n" + "refined ".repeat(80) };
+      }
+      this._die("bpf");
+      this.counts.bpf++;
+      return { title: "BPF", markdown_body: "## Business Summary\n" + "draft ".repeat(80) };
+    }
+    // Speaker reconciliation recovery pass — no-op by default (real names in the
+    // fake transcript mean it usually doesn't even fire).
+    if (s.includes("speaker-reconciliation layer")) {
+      this.counts.reconcile++;
+      return { participants: [] };
+    }
     throw new Error("unrouted generateJson, sys=" + s.slice(0, 60));
   }
 }
@@ -128,6 +144,7 @@ test("runPipeline: full run produces both documents and marks the meeting ready"
 
   assert.equal((await store.getDocument("r", "mom")).markdown.length > 0, true);
   assert.equal((await store.getDocument("r", "meeting_analysis")).markdown.length > 0, true);
+  assert.equal((await store.getDocument("r", "business_process_flow")).markdown.length > 0, true);
   assert.ok((await store.getTranscript("r")).plainText.includes("Welcome everyone"));
 
   // audio parts + Gemini file cleaned up at `done`
@@ -138,6 +155,7 @@ test("runPipeline: full run produces both documents and marks the meeting ready"
   assert.equal(client.counts.transcribe, 1);
   assert.equal(client.counts.mom, 1);
   assert.equal(client.counts.analysis, 1);
+  assert.equal(client.counts.bpf, 1);
 
   assert.deepEqual(sent.filter((e) => e.type === "PROCESSING_DONE"), [{ type: "PROCESSING_DONE", runId: "r" }]);
   assert.ok(sent.some((e) => e.type === "PROCESSING_PROGRESS" && e.stage === "transcribing"));
@@ -150,7 +168,8 @@ test("runPipeline: quality mode adds the verify + refine passes", async () => {
   const { ctx } = ctxFor(store, client, { qualityMode: true });
   await runPipeline("r", ctx);
   assert.equal(client.counts.extractVerify, 1);
-  assert.equal(client.counts.refine, 1); // one combined refine (both docs at once)
+  assert.equal(client.counts.refine, 1); // one combined refine (MOM + Analysis at once)
+  assert.equal(client.counts.bpfRefine, 1); // Business Process Flow gets its own refine
 });
 
 // --------------------------------------------------------------------- G4
@@ -177,11 +196,13 @@ test("G4: resumes from every stage without repeating a completed step", async ()
     assert.equal(client.counts.extractCore, 1, `${failAt}: core extract ran exactly once`);
     assert.equal(client.counts.mom, 1, `${failAt}: MOM generated exactly once`);
     assert.equal(client.counts.analysis, 1, `${failAt}: Analysis generated exactly once`);
+    assert.equal(client.counts.bpf, 1, `${failAt}: Business Process Flow generated exactly once`);
 
     const m = await store.getMeeting("r");
     assert.equal(m.status, "ready", `${failAt}: ready after resume`);
     assert.ok(await store.getDocument("r", "mom"), `${failAt}: MOM stored`);
     assert.ok(await store.getDocument("r", "meeting_analysis"), `${failAt}: Analysis stored`);
+    assert.ok(await store.getDocument("r", "business_process_flow"), `${failAt}: BPF stored`);
     assert.equal(await store.countAudioParts("r"), 0, `${failAt}: parts cleaned`);
   }
 });
