@@ -4,10 +4,10 @@ import shutil
 import traceback
 from pathlib import Path
 
-from app import db
+from app import db, entitlement
 from app.config import settings
 from app.docgen import engine as docgen_engine
-from app.pipeline.diarize import diarize
+from app.pipeline.diarize import diarize, probe_duration_seconds
 from app.pipeline.download import working_dir_for
 from app.pipeline.merge import build_transcript, render_plain_text
 from app.pipeline.roster import compute_attendees, parse_attendee_roster
@@ -126,7 +126,9 @@ def _run(run_id: str) -> None:
         facts = docgen_engine.empty_meeting_facts()
     write_meeting_file(folder, "facts.json", json.dumps(facts, indent=2))
 
-    db.update_run(run_id, state="saved")
+    duration_seconds = probe_duration_seconds(audio_path) if audio_path.exists() else 0.0
+    db.update_run(run_id, state="saved", duration_seconds=duration_seconds)
+    entitlement.record_meeting_completed(run_id)
 
     # See app/progress.py -- folds this run's tail-stage durations into the
     # small persisted history used to estimate a future run's ETA, before

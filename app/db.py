@@ -100,6 +100,23 @@ CREATE TABLE IF NOT EXISTS device_tokens (
     revoked_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_device_tokens_customer ON device_tokens (customer_id);
+
+-- SaaS conversion, Phase 2 (entitlement engine) -- status defaults to
+-- nonexistent/inactive until Phase 6 wires real Razorpay events; this lets
+-- the entitlement logic and its tests be written and verified independently
+-- of payment integration being live yet.
+CREATE TABLE IF NOT EXISTS subscriptions (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    plan TEXT NOT NULL DEFAULT '',
+    currency TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'inactive',
+    current_period_end TEXT,
+    razorpay_subscription_id TEXT,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_subscriptions_customer_id ON subscriptions (customer_id);
 """
 
 # Text stamped into error_message by /meetings/{id}/cancel when a recording
@@ -157,6 +174,11 @@ def init_db(db_path: Optional[Path] = None) -> None:
             # added here, with the rest of Phase 1's schema work, to avoid a
             # second migration pass over the same table.
             "ALTER TABLE meeting_runs ADD COLUMN billing_mode TEXT NOT NULL DEFAULT ''",
+            # Phase 2: the meeting's real recorded audio duration, set once at
+            # the "saved" transition (see both orchestrators) -- NULL for
+            # every run that predates this column, and while a run is still
+            # in progress.
+            "ALTER TABLE meeting_runs ADD COLUMN duration_seconds REAL",
         ):
             try:
                 conn.execute(column_sql)
@@ -562,6 +584,68 @@ def revoke_all_device_tokens_for_customer(customer_id: str) -> int:
             (_now(), customer_id),
         )
         return cursor.rowcount
+
+
+# --- Phase 2: entitlement engine -----------------------------------------
+
+
+def increment_free_meetings_used(customer_id: str) -> dict[str, Any]:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE customers SET free_meetings_used = free_meetings_used + 1 WHERE id = ?",
+            (customer_id,),
+        )
+    return get_customer(customer_id)
+
+
+def count_start_attempts_today(customer_id: str) -> int:
+    """Every /meetings/start call for this customer today, regardless of
+    outcome -- the entitlement engine's separate abuse guard from the
+    3-free-meeting allowance (see app.entitlement.authorize_new_meeting):
+    a failed/never-captured attempt doesn't cost trial quota (only a
+    successful "saved" run does, via increment_free_meetings_used above),
+    so without this a scripted caller could spam free attempts at zero
+    quota cost. Counts every state, unlike count_runs_today() which
+    excludes cancelled-before-audio attempts.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            """SELECT COUNT(*) AS n FROM meeting_runs
+               WHERE customer_id = ? AND date(created_at) = date('now')""",
+            (customer_id,),
+        ).fetchone()
+    return row["n"]
+
+
+def count_runs_this_month(customer_id: str) -> int:
+    """Backs the fair-use alert/hard-ceiling checks for a paid customer's
+    "unlimited" plan (see app.entitlement) -- calendar month, UTC, matching
+    how created_at is stored.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            """SELECT COUNT(*) AS n FROM meeting_runs
+               WHERE customer_id = ? AND strftime('%Y-%m', created_at) = strftime('%Y-%m', 'now')""",
+            (customer_id,),
+        ).fetchone()
+    return row["n"]
+
+
+def get_active_subscription(customer_id: str) -> Optional[dict[str, Any]]:
+    """The customer's current subscription if its status is "active" and
+    (when set) current_period_end hasn't passed -- a cancelled-at-period-end
+    subscription (Phase 6) keeps returning here, and thus keeps entitling
+    unlimited meetings, right up until that date, same as real SaaS billing.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            """SELECT * FROM subscriptions
+               WHERE customer_id = ? AND status = 'active'
+                 AND (current_period_end IS NULL OR current_period_end >= ?)
+               ORDER BY created_at DESC LIMIT 1""",
+            (customer_id, _now()),
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def set_client_name(run_id: str, client_name: str) -> dict[str, Any]:

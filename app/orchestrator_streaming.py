@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional
 
-from app import db
+from app import db, entitlement
 from app.chunked_state import append_segments_to_disk, drop as drop_state, get_or_create
 from app.config import settings
 from app.docgen import engine as docgen_engine
@@ -297,7 +297,11 @@ def finalize_run(run_id: str) -> None:
         facts = docgen_engine.empty_meeting_facts()
     write_meeting_file(folder, "facts.json", json.dumps(facts, indent=2))
 
-    db.update_run(run_id, state="saved")
+    # Phase 2: real recorded duration, from the same per-chunk durations
+    # already tracked for offset calculation above -- not an estimate.
+    duration_seconds = sum(state.chunk_durations.values())
+    db.update_run(run_id, state="saved", duration_seconds=duration_seconds)
+    entitlement.record_meeting_completed(run_id)
 
     # Folds this run's bounded post-meeting-tail stage durations into the
     # small persisted history (see app/progress.py) so a *future* run's

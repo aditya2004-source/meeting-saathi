@@ -298,11 +298,19 @@ async function startMeetingRun(title, clientName = "") {
     // Any non-ok response's JSON "message" field (if it has one) is shown
     // as-is, since the popup's `Could not start: ${result.error}` path
     // expects something human-readable -- falls back to a generic message
-    // otherwise.
+    // otherwise. FastAPI's HTTPException (see app.entitlement, Phase 2)
+    // returns {"detail": "<code>"} rather than "message" -- mapped to a
+    // friendly string here for the known entitlement codes.
+    const ENTITLEMENT_MESSAGES = {
+      trial_exhausted: "Your 3 free meetings are used up. Upgrade to keep recording.",
+      too_many_attempts_today: "Too many attempts today -- please try again tomorrow.",
+      fair_use_ceiling_reached: "Monthly usage limit reached -- contact support.",
+    };
     let message = `server returned ${response.status} from /meetings/start`;
     try {
       const body = await response.json();
       if (body && body.message) message = body.message;
+      else if (body && ENTITLEMENT_MESSAGES[body.detail]) message = ENTITLEMENT_MESSAGES[body.detail];
     } catch {
       // response body wasn't JSON -- keep the generic message above.
     }

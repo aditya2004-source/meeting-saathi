@@ -118,6 +118,32 @@ class Settings(BaseSettings):
     resend_api_key: str = ""
     email_from_address: str = "Meeting Saathi <onboarding@resend.dev>"
 
+    # Phase 2: free-trial / subscription entitlement engine (see
+    # app/entitlement.py). Every threshold here is deliberately generous --
+    # these are safety ceilings and abuse guards, not the expected common
+    # case ("unlimited" for a paid customer should stay true in practice).
+    free_meeting_allowance: int = 3
+    # Bounds start *attempts* per customer per day, separate from the free
+    # allowance -- a failed/never-captured attempt doesn't burn free quota
+    # (see entitlement.record_meeting_completed(), only called on success),
+    # so without this a scripted caller could spam free /meetings/start
+    # calls indefinitely at zero quota cost, still burning server resources.
+    max_start_attempts_per_day: int = 10
+    # A paid ("unlimited") customer crossing this many meetings in a
+    # calendar month doesn't get blocked -- it just flags the account for
+    # the founder to look at in the admin panel (Phase 7).
+    fair_use_alert_threshold: int = 100
+    # A genuine circuit-breaker, well above fair_use_alert_threshold -- only
+    # reached by runaway abuse or a client-side bug, not real usage.
+    fair_use_hard_ceiling: int = 300
+    # Enforced server-side in /meetings/{run_id}/chunk and .../finalize
+    # (see app/main.py) by comparing the chunk `sequence` against this
+    # divided by the extension's fixed 50s chunk interval -- not yet
+    # verified against Gemini's actual context/output limits at this length
+    # (see Phase 3's audit note); don't advertise this publicly until that's
+    # confirmed.
+    max_meeting_duration_seconds: int = 10800  # 3 hours
+
     # Output storage
     base_storage_dir: Path = Path.home() / "Downloads" / "Meeting Saathi"
     keep_raw_recording: bool = False

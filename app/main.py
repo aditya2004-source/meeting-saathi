@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import auth, db, document_generation_state
+from app import auth, db, document_generation_state, entitlement
 from app import orchestrator_streaming
 from app.auth_routes import router as auth_router
 from app.config import settings
@@ -695,9 +695,14 @@ async def start_meeting(
     pairing UI until Phase 4 ships) keeps working exactly as it does today,
     just without the new per-customer protections that a real customer_id
     unlocks on every other /meetings/{run_id}/... route (see
-    auth.authorize_run_access()).
+    auth.authorize_run_access()). An identified customer additionally goes
+    through app.entitlement's free-trial/subscription check here (3 free
+    meetings, then an active subscription, else 402 trial_exhausted) --
+    an anonymous/unpaired caller skips this entirely, same transitional
+    reasoning as the ownership check.
     """
     customer = auth.get_current_customer_optional(request)
+    billing_mode = entitlement.authorize_new_meeting(customer) if customer else ""
     run = db.create_run(
         title=title.strip() or "Untitled Meeting",
         audio_path="",
@@ -705,10 +710,23 @@ async def start_meeting(
         client_name=client_name.strip(),
         device_id=device_id.strip(),
         customer_id=customer["id"] if customer else None,
+        billing_mode=billing_mode,
     )
     working_dir_for(run["id"])
     run = db.update_run(run["id"], state="received")
     return JSONResponse({"id": run["id"], "state": run["state"]})
+
+
+# The extension's fixed MediaRecorder restart-cycle interval (see
+# `Admin personal/extension(personal)/offscreen.js`'s CHUNK_INTERVAL_MS) --
+# elapsed meeting time is knowable server-side from `sequence` alone,
+# without any new state, since every chunk is ~this long.
+_CHUNK_INTERVAL_SECONDS = 50
+
+
+def _duration_cap_exceeded(sequence: int) -> bool:
+    max_sequence = settings.max_meeting_duration_seconds // _CHUNK_INTERVAL_SECONDS
+    return sequence > max_sequence
 
 
 @app.post("/meetings/{run_id}/chunk")
@@ -721,6 +739,12 @@ async def upload_chunk(
     attendee_roster: str | None = Form(None),
 ):
     auth.authorize_run_access(request, db.get_run(run_id))
+    if _duration_cap_exceeded(sequence):
+        # Audio past the cap is simply dropped -- never transcribed, never
+        # billed. The extension keeps recording/uploading past this point
+        # (a follow-up UX improvement to stop proactively is Phase 4/5
+        # polish, not required for this safety cap to work).
+        return JSONResponse({"id": run_id, "sequence": sequence, "accepted": False, "reason": "duration_cap_exceeded"})
     content = await audio.read()
     orchestrator_streaming.accept_chunk(
         run_id, sequence, content, speaker_events, attendee_roster, final=False
@@ -737,6 +761,14 @@ async def finalize_meeting(
     speaker_events: str | None = Form(None),
     attendee_roster: str | None = Form(None),
 ):
+    # Deliberately NOT duration-capped like upload_chunk above: this call
+    # must always be allowed through so a meeting that ran past the cap
+    # still properly wraps up and saves whatever was already gathered,
+    # rather than being left stuck in "chunk_processing" forever (later
+    # swept to "failed" by db.fail_stale_runs(), losing a real transcript
+    # for no benefit). The cap already did its job by then -- every /chunk
+    # call past the threshold was dropped (see upload_chunk), so at most
+    # one final ~50s chunk's worth of audio is ever processed beyond it.
     auth.authorize_run_access(request, db.get_run(run_id))
     content = await audio.read()
     orchestrator_streaming.accept_chunk(
