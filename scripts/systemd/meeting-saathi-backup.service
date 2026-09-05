@@ -1,0 +1,8 @@
+[Unit]
+Description=Meeting Saathi DB + storage backup (one-shot, triggered by meeting-saathi-backup.timer)
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/enjay/projects/meeting-saathi
+ExecStart=/usr/bin/python3 scripts/backup.py --keep 7
+ExecStartPost=/usr/bin/python3 scripts/reap_working_dirs.py

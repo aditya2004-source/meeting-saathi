@@ -272,6 +272,9 @@ def mark_failed(run_id: str, error: Exception | str) -> dict[str, Any]:
 # in one of those with no recent activity is orphaned (the worker thread that
 # was driving it is gone).
 _TERMINAL_STATES = ("saved", "failed")
+# Public alias -- scripts/reap_working_dirs.py needs the same source of truth
+# without reaching into a module-private name.
+TERMINAL_STATES = _TERMINAL_STATES
 
 
 def fail_stale_runs(older_than_minutes: int) -> int:

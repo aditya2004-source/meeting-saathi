@@ -1,6 +1,9 @@
+import logging
 from pathlib import Path
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+logger = logging.getLogger("meeting_saathi")
 
 
 class Settings(BaseSettings):
@@ -176,7 +179,35 @@ class Settings(BaseSettings):
     working_dir: Path = project_root / "working"
 
 
+def validate_settings(candidate: "Settings") -> None:
+    """Fail loudly on dangerous-blank config; warn on merely-inconvenient blanks.
+
+    A blank session_secret_key would silently sign every session cookie with
+    the empty string -- SessionMiddleware doesn't refuse to start, it just
+    makes the signature meaningless (anyone can forge a valid-looking session
+    cookie). Real deployments (including this project's own .env) always set
+    this; only a from-scratch checkout without a .env would ever hit this.
+
+    Admin credentials being blank is already fail-closed (the login/dashboard
+    routes 404/reject rather than allow access), so it doesn't raise -- but
+    it's worth surfacing, since "admin panel unreachable" is easy to mistake
+    for a bug rather than an unset .env value.
+    """
+    if not candidate.session_secret_key:
+        raise RuntimeError(
+            "SESSION_SECRET_KEY is not set. Set it in .env before starting "
+            "the server -- an empty secret would sign session cookies with "
+            "a constant, forgeable value."
+        )
+    if not (candidate.admin_url_slug and candidate.admin_username and candidate.admin_password):
+        logger.warning(
+            "ADMIN_URL_SLUG/ADMIN_USERNAME/ADMIN_PASSWORD are not all set -- "
+            "the admin dashboard is unreachable until they are."
+        )
+
+
 settings = Settings()
+validate_settings(settings)
 settings.base_storage_dir.mkdir(parents=True, exist_ok=True)
 settings.working_dir.mkdir(parents=True, exist_ok=True)
 settings.db_path.parent.mkdir(parents=True, exist_ok=True)
