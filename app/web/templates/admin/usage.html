@@ -1,0 +1,25 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Usage Analytics</h1>
+{% include "admin/_filters.html" %}
+
+<div class="admin-grid">
+  <div class="admin-card"><div class="label">Meetings</div><div class="value">{{ meeting_volume }}</div></div>
+  <div class="admin-card"><div class="label">Success Rate</div><div class="value">{{ success_rate }}%</div></div>
+  <div class="admin-card"><div class="label">Avg Duration</div><div class="value">{{ (avg_duration_seconds // 60) | int }}m</div></div>
+</div>
+
+<div class="admin-section">
+  <h2>Document Usage</h2>
+  <div style="overflow-x:auto">
+  <table class="admin-table">
+    <thead><tr><th>Document</th><th>Generated</th><th>Viewed</th><th>Downloaded</th></tr></thead>
+    <tbody>
+    {% for doc_key, counts in document_usage.items() %}
+      <tr><td>{{ doc_key }}</td><td>{{ counts.generated }}</td><td>{{ counts.viewed }}</td><td>{{ counts.downloaded }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

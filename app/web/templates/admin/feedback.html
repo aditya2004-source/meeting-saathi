@@ -1,0 +1,37 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Feedback</h1>
+<div class="admin-grid">
+  <div class="admin-card"><div class="label">Total</div><div class="value">{{ feedback | length }}</div></div>
+  <div class="admin-card"><div class="label">Bugs</div><div class="value">{{ category_counts.get('bug', 0) }}</div></div>
+  <div class="admin-card"><div class="label">Feature Requests</div><div class="value">{{ category_counts.get('feature', 0) }}</div></div>
+  <div class="admin-card"><div class="label">General</div><div class="value">{{ category_counts.get('general', 0) }}</div></div>
+</div>
+
+<div style="overflow-x:auto">
+<table class="admin-table">
+  <thead><tr><th>Email</th><th>Category</th><th>Message</th><th>Date</th><th>Status</th><th>Action</th></tr></thead>
+  <tbody>
+  {% for f in feedback %}
+    <tr>
+      <td>{{ f.email or "(anonymous)" }}</td>
+      <td><span class="admin-pill {{ 'red' if f.category == 'bug' else 'orange' if f.category == 'feature' else '' }}">{{ f.category | capitalize }}</span></td>
+      <td>{{ f.message }}</td>
+      <td>{{ f.created_at[:10] }}</td>
+      <td><span class="admin-pill {{ 'green' if f.status == 'resolved' else '' }}">{{ f.status | capitalize }}</span></td>
+      <td>
+        {% if f.status != 'resolved' %}
+        <form method="post" action="/{{ slug }}/admin-feedback/{{ f.id }}/resolve">
+          <button type="submit">Resolve</button>
+        </form>
+        {% endif %}
+      </td>
+    </tr>
+  {% endfor %}
+  {% if not feedback %}
+    <tr><td colspan="6" class="admin-muted">No feedback yet.</td></tr>
+  {% endif %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

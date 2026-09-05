@@ -30,7 +30,10 @@
       <p class="muted">Free trial: {{ customer.free_meetings_used }} of {{ free_meeting_allowance }} meetings used.</p>
     {% endif %}
   {% elif logout_url %}
-    <p class="muted"><a href="{{ logout_url }}">Logout</a></p>
+    <p class="muted">
+      {% if admin_analytics_url %}<a href="{{ admin_analytics_url }}">Business Analytics</a> · {% endif %}
+      <a href="{{ logout_url }}">Logout</a>
+    </p>
   {% endif %}
   {% if viewing_name %}
     <p class="muted">Showing meetings for <strong>{{ viewing_name }}</strong> only.</p>

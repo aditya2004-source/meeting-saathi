@@ -1,0 +1,37 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Customers</h1>
+<div style="overflow-x:auto">
+<table class="admin-table">
+  <thead><tr><th>Name</th><th>Email</th><th>Plan</th><th>Status</th><th>Meetings</th><th>Free used</th><th>Joined</th><th>Last active</th><th>Action</th></tr></thead>
+  <tbody>
+  {% for c in customers %}
+    <tr>
+      <td>{{ c.name or "(not set)" }}</td>
+      <td>{{ c.email }}</td>
+      <td>{{ (c.active_plan | capitalize) if c.active_plan else "Free" }}</td>
+      <td><span class="admin-pill {{ 'green' if c.status == 'active' else 'red' }}">{{ c.status | capitalize }}</span></td>
+      <td>{{ c.total_meetings }}</td>
+      <td>{{ c.free_meetings_used }}</td>
+      <td>{{ c.created_at[:10] }}</td>
+      <td>{{ c.last_active_at[:10] if c.last_active_at else "--" }}</td>
+      <td>
+        <form method="post" action="/{{ slug }}/customers/{{ c.id }}/status" style="display:inline">
+          {% if c.status == 'active' %}
+            <input type="hidden" name="status" value="blocked">
+            <button type="submit">Block</button>
+          {% else %}
+            <input type="hidden" name="status" value="active">
+            <button type="submit">Unblock</button>
+          {% endif %}
+        </form>
+      </td>
+    </tr>
+  {% endfor %}
+  {% if not customers %}
+    <tr><td colspan="9" class="admin-muted">No customers yet.</td></tr>
+  {% endif %}
+  </tbody>
+</table>
+</div>
+{% endblock %}

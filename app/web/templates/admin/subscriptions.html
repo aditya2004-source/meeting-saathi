@@ -1,0 +1,60 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Subscriptions</h1>
+<div class="admin-grid">
+  <div class="admin-card"><div class="label">Monthly Active</div><div class="value">{{ monthly_active }}</div></div>
+  <div class="admin-card"><div class="label">Yearly Active</div><div class="value">{{ yearly_active }}</div></div>
+  <div class="admin-card"><div class="label">MRR</div><div class="value small">&#8377;{{ "{:,.0f}".format(mrr) }}</div></div>
+</div>
+
+<div class="admin-section">
+<h2>Subscriptions</h2>
+<div style="overflow-x:auto">
+<table class="admin-table">
+  <thead><tr><th>Customer</th><th>Plan</th><th>Currency</th><th>Status</th><th>Renews/ends</th><th>Created</th></tr></thead>
+  <tbody>
+  {% for s in subscriptions %}
+    <tr>
+      <td>{{ s.customer_name or s.customer_email }}</td>
+      <td>{{ s.plan | capitalize }}</td>
+      <td>{{ s.currency }}</td>
+      <td>
+        {% if s.status == 'active' %}<span class="admin-pill green">Active</span>
+        {% elif s.status in ('cancelled', 'expired') %}<span class="admin-pill red">{{ s.status | capitalize }}</span>
+        {% else %}<span class="admin-pill orange">{{ s.status | capitalize }}</span>{% endif %}
+      </td>
+      <td>{{ s.current_period_end[:10] if s.current_period_end else "--" }}</td>
+      <td>{{ s.created_at[:10] }}</td>
+    </tr>
+  {% endfor %}
+  {% if not subscriptions %}
+    <tr><td colspan="6" class="admin-muted">No subscriptions yet.</td></tr>
+  {% endif %}
+  </tbody>
+</table>
+</div>
+</div>
+
+<div class="admin-section">
+<h2>Payments</h2>
+<div style="overflow-x:auto">
+<table class="admin-table">
+  <thead><tr><th>Original Amount</th><th>Currency</th><th>INR Settlement</th><th>Status</th><th>Date</th></tr></thead>
+  <tbody>
+  {% for p in payments %}
+    <tr>
+      <td>{{ "{:,.2f}".format(p.original_amount_minor / 100) }}</td>
+      <td>{{ p.original_currency }}</td>
+      <td>{{ "{:,.2f}".format(p.inr_settlement_amount_minor / 100) if p.inr_settlement_amount_minor is not none else "--" }}</td>
+      <td>{{ p.status | capitalize }}</td>
+      <td>{{ p.created_at[:10] }}</td>
+    </tr>
+  {% endfor %}
+  {% if not payments %}
+    <tr><td colspan="5" class="admin-muted">No payments yet.</td></tr>
+  {% endif %}
+  </tbody>
+</table>
+</div>
+</div>
+{% endblock %}

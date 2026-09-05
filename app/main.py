@@ -14,7 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import auth, db, document_generation_state, entitlement
+from app import admin_routes, auth, db, document_generation_state, entitlement
 from app import orchestrator_streaming
 from app.auth_routes import router as auth_router
 from app.billing.routes import router as billing_router
@@ -51,6 +51,7 @@ app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 app.include_router(auth_router)
 app.include_router(site_router)
 app.include_router(billing_router)
+app.include_router(admin_routes.router)
 
 # Seeds the four legal policies (ToS/Privacy/Refund/AI-Disclaimer) into the
 # DB idempotently -- see app/policies.py. Same "module import == process
@@ -129,6 +130,10 @@ _STAGE_HISTORY_PATH = settings.project_root / "data" / "stage_duration_history.j
 _DOWNLOADABLE_FILES = {"transcript.txt", "transcript.json", "facts.json"} | {
     filename for doc_key in registry.DOCUMENTS for filename in registry.filenames_for(doc_key)
 }
+
+# Phase 7: which doc_key a downloaded .pdf filename belongs to, for the
+# "Document Usage" chart's download-event tracking.
+_DOC_KEY_BY_PDF_FILENAME = {registry.filenames_for(doc_key)[1]: doc_key for doc_key in registry.DOCUMENTS}
 
 
 def _format_started(created_at: str) -> str:
@@ -467,6 +472,7 @@ def admin_dashboard(request: Request, slug: str, client: str = ""):
             "usage": usage,
             "viewing_name": "",
             "logout_url": f"/{slug}/logout",
+            "admin_analytics_url": f"/{slug}/overview",
         },
     )
 
@@ -646,6 +652,8 @@ def download_meeting_file(request: Request, run_id: str, filename: str):
     file_path = Path(run["folder_path"]) / filename
     if not file_path.is_file():
         return JSONResponse({"error": "not found"}, status_code=404)
+    if filename in _DOC_KEY_BY_PDF_FILENAME:
+        db.record_document_event(run_id, _DOC_KEY_BY_PDF_FILENAME[filename], "downloaded")
     return FileResponse(file_path, filename=filename)
 
 
@@ -671,6 +679,7 @@ def view_document(request: Request, run_id: str, doc_key: str):
         return HTMLResponse("Not ready yet", status_code=404)
     transformed, has_mermaid = extract_mermaid_blocks(md_path.read_text(encoding="utf-8"))
     body_html = markdown_lib.markdown(transformed, extensions=["tables", "fenced_code"])
+    db.record_document_event(run_id, doc_key, "viewed")
     return templates.TemplateResponse(
         "document_view.html",
         {
@@ -739,6 +748,7 @@ def _generate_document_group(run_id: str, group_key: str) -> None:
 
         for produced_key, content in result.items():
             write_generated_document(folder, produced_key, content, facts)
+            db.record_document_event(run_id, produced_key, "generated")
     except Exception as exc:  # noqa: BLE001 - one document's failure must not crash the server
         traceback.print_exc()
         document_generation_state.mark_failed(run_id, group_key, str(exc))

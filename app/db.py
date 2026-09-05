@@ -148,6 +148,32 @@ CREATE TABLE IF NOT EXISTS payments (
 );
 CREATE INDEX IF NOT EXISTS idx_payments_customer_id ON payments (customer_id);
 
+-- SaaS conversion, Phase 7 (admin analytics) -- backs "Document Usage" and
+-- the processing-reliability chart. Populated from three call sites: the
+-- on-demand generate route (event_type "generated"), the in-browser
+-- document viewer (Phase 5, "viewed"), and the PDF download route
+-- ("downloaded").
+CREATE TABLE IF NOT EXISTS document_events (
+    id TEXT PRIMARY KEY,
+    run_id TEXT NOT NULL,
+    doc_key TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    occurred_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_document_events_doc_key ON document_events (doc_key);
+
+-- SaaS conversion, Phase 7 -- fixed operating costs (VPS, domain, etc.)
+-- aren't derivable from usage data at all; the founder enters them manually,
+-- one row per month, from the admin Expenses page.
+CREATE TABLE IF NOT EXISTS fixed_costs (
+    id TEXT PRIMARY KEY,
+    effective_month TEXT NOT NULL,
+    amount_inr REAL NOT NULL,
+    note TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_fixed_costs_month ON fixed_costs (effective_month);
+
 -- SaaS conversion, Phase 4 (website) -- created here (not Phase 8, which
 -- originally owned it) because Phase 4's signup/consent flow and legal
 -- routes both need it before Phase 8 is reached. Phase 8 later adds
@@ -518,6 +544,30 @@ def touch_customer_last_active(customer_id: str) -> None:
         )
 
 
+def list_customers() -> list[dict[str, Any]]:
+    """Backs the admin Customers page -- one row per customer, with their
+    current subscription plan/status (if any) and total meetings, computed
+    with a couple of correlated subqueries rather than a heavier join,
+    since this table is expected to stay small for a solo-founder product.
+    """
+    with _connect() as conn:
+        rows = conn.execute(
+            """SELECT
+                   c.*,
+                   (SELECT s.plan FROM subscriptions s
+                    WHERE s.customer_id = c.id AND s.status = 'active'
+                    ORDER BY s.created_at DESC LIMIT 1) AS active_plan,
+                   (SELECT COUNT(*) FROM meeting_runs m WHERE m.customer_id = c.id) AS total_meetings
+               FROM customers c
+               ORDER BY c.created_at DESC"""
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def set_customer_status(customer_id: str, status: str) -> dict[str, Any]:
+    return update_customer(customer_id, status=status)
+
+
 def create_otp_code(email: str, code_hash: str, ttl_minutes: int) -> dict[str, Any]:
     otp_id = str(uuid.uuid4())
     now = datetime.datetime.now(datetime.timezone.utc)
@@ -817,6 +867,48 @@ def list_payments(customer_id: Optional[str] = None) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+# --- Phase 7: document events + fixed costs --------------------------------
+
+
+def record_document_event(run_id: str, doc_key: str, event_type: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO document_events (id, run_id, doc_key, event_type, occurred_at) VALUES (?, ?, ?, ?, ?)",
+            (str(uuid.uuid4()), run_id, doc_key, event_type, _now()),
+        )
+
+
+def count_document_events_by_key(event_type: str) -> dict[str, int]:
+    """{doc_key: count} for one event_type -- backs the "Document Usage" chart."""
+    with _connect() as conn:
+        rows = conn.execute(
+            "SELECT doc_key, COUNT(*) AS n FROM document_events WHERE event_type = ? GROUP BY doc_key",
+            (event_type,),
+        ).fetchall()
+    return {row["doc_key"]: row["n"] for row in rows}
+
+
+def add_fixed_cost(effective_month: str, amount_inr: float, note: str = "") -> dict[str, Any]:
+    cost_id = str(uuid.uuid4())
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO fixed_costs (id, effective_month, amount_inr, note, created_at) VALUES (?, ?, ?, ?, ?)",
+            (cost_id, effective_month, amount_inr, note, _now()),
+        )
+        row = conn.execute("SELECT * FROM fixed_costs WHERE id = ?", (cost_id,)).fetchone()
+    return dict(row)
+
+
+def list_fixed_costs(effective_month: Optional[str] = None) -> list[dict[str, Any]]:
+    where = "WHERE effective_month = ?" if effective_month else ""
+    params = (effective_month,) if effective_month else ()
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM fixed_costs {where} ORDER BY effective_month DESC, created_at DESC", params
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
 # --- Phase 4: policies + feedback -----------------------------------------
 
 
@@ -878,6 +970,11 @@ def list_feedback(status: Optional[str] = None) -> list[dict[str, Any]]:
             f"SELECT * FROM feedback {where} ORDER BY created_at DESC", params
         ).fetchall()
     return [dict(row) for row in rows]
+
+
+def resolve_feedback(feedback_id: str) -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE feedback SET status = 'resolved' WHERE id = ?", (feedback_id,))
 
 
 def set_client_name(run_id: str, client_name: str) -> dict[str, Any]:

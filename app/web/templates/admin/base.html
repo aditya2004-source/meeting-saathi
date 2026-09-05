@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{{ page_title | default("Admin") }} -- Meeting Saathi</title>
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+  <div class="admin-app">
+    <aside class="admin-sidebar">
+      <div class="brand">Meeting Saathi</div>
+      <a href="/{{ slug }}/overview" class="{{ 'active' if active == 'overview' }}"><span class="label">Overview</span></a>
+      <a href="/{{ slug }}/customers" class="{{ 'active' if active == 'customers' }}"><span class="label">Customers</span></a>
+      <a href="/{{ slug }}/subscriptions" class="{{ 'active' if active == 'subscriptions' }}"><span class="label">Subscriptions</span></a>
+      <a href="/{{ slug }}/usage" class="{{ 'active' if active == 'usage' }}"><span class="label">Usage</span></a>
+      <a href="/{{ slug }}/expenses" class="{{ 'active' if active == 'expenses' }}"><span class="label">Expenses</span></a>
+      <a href="/{{ slug }}/admin-feedback" class="{{ 'active' if active == 'feedback' }}"><span class="label">Feedback</span></a>
+      <a href="/{{ slug }}/dashboard" class="{{ 'active' if active == 'meetings' }}"><span class="label">All Meetings</span></a>
+      <a href="/{{ slug }}/logout"><span class="label">Logout</span></a>
+    </aside>
+    <main class="admin-main">
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

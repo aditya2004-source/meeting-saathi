@@ -1,0 +1,58 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Business Overview</h1>
+{% include "admin/_filters.html" %}
+
+<div class="admin-grid">
+  <div class="admin-card"><div class="label">Active Users</div><div class="value">{{ active_users }}</div></div>
+  <div class="admin-card"><div class="label">New Users</div><div class="value">{{ new_users }}</div></div>
+  <div class="admin-card"><div class="label">Paid Users</div><div class="value">{{ paid_users }}</div></div>
+  <div class="admin-card"><div class="label">Free Users</div><div class="value">{{ free_users }}</div></div>
+  <div class="admin-card"><div class="label">MRR</div><div class="value small">&#8377;{{ "{:,.0f}".format(mrr) }}</div></div>
+  <div class="admin-card"><div class="label">Revenue (period)</div><div class="value small">&#8377;{{ "{:,.0f}".format(revenue) }}</div></div>
+  <div class="admin-card"><div class="label">Est. Cost (period)</div><div class="value small">&#8377;{{ "{:,.0f}".format(cost.total) }}</div></div>
+  <div class="admin-card"><div class="label">Net Profit (period)</div><div class="value small">&#8377;{{ "{:,.0f}".format(net_profit) }}</div></div>
+  <div class="admin-card"><div class="label">Free &rarr; Paid</div><div class="value">{{ conversion }}%</div></div>
+  <div class="admin-card"><div class="label">Meeting Volume</div><div class="value">{{ meeting_volume }}</div></div>
+  <div class="admin-card"><div class="label">Processing Success</div><div class="value">{{ success_rate }}%</div></div>
+  <div class="admin-card"><div class="label">Avg Duration</div><div class="value">{{ (avg_duration_seconds // 60) | int }}m</div></div>
+</div>
+<p class="admin-note">Revenue is real (from captured payments). Cost is estimated (see Expenses for the breakdown). MRR is a run-rate snapshot from active INR subscriptions, not period-scoped.</p>
+
+<div class="admin-section">
+  <h2>Revenue, Cost &amp; Profit -- last 6 months</h2>
+  <div class="admin-bars">
+    {% for m in revenue_cost_profit %}
+    <div class="admin-barrow"><span>{{ m.month }} revenue</span><div class="admin-track"><span style="width:{{ (m.revenue / max_rcp * 100) if max_rcp else 0 }}%"></span></div><b>&#8377;{{ "{:,.0f}".format(m.revenue) }}</b></div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="admin-section">
+  <h2>Plan Mix</h2>
+  <div class="admin-bars">
+    <div class="admin-barrow"><span>Free</span><div class="admin-track"><span style="width:{{ (plan_mix.free / total_customers * 100) if total_customers else 0 }}%"></span></div><b>{{ plan_mix.free }}</b></div>
+    <div class="admin-barrow"><span>Monthly</span><div class="admin-track"><span style="width:{{ (plan_mix.monthly / total_customers * 100) if total_customers else 0 }}%"></span></div><b>{{ plan_mix.monthly }}</b></div>
+    <div class="admin-barrow"><span>Yearly</span><div class="admin-track"><span style="width:{{ (plan_mix.yearly / total_customers * 100) if total_customers else 0 }}%"></span></div><b>{{ plan_mix.yearly }}</b></div>
+  </div>
+</div>
+
+<div class="admin-section">
+  <h2>Meeting Volume -- last 6 weeks</h2>
+  <div class="admin-bars">
+    {% for label, count in meeting_volume_weekly %}
+    <div class="admin-barrow"><span>{{ label }}</span><div class="admin-track"><span style="width:{{ (count / max_weekly * 100) if max_weekly else 0 }}%"></span></div><b>{{ count }}</b></div>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="admin-section">
+  <h2>Document Usage</h2>
+  <div class="admin-bars">
+    {% for doc_key, counts in document_usage.items() %}
+    <div class="admin-barrow"><span>{{ doc_key }}</span><div class="admin-track"><span style="width:{{ (counts.generated / max_doc_generated * 100) if max_doc_generated else 0 }}%"></span></div><b>{{ counts.generated }}</b></div>
+    {% endfor %}
+  </div>
+  <p class="admin-note">Bars show documents generated. Viewed/downloaded counts are on the Usage page.</p>
+</div>
+{% endblock %}

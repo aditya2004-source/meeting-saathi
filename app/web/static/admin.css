@@ -1,0 +1,33 @@
+/* Phase 7: founder admin analytics pages -- separate from style.css (the
+   existing customer/admin meeting-list dashboard) and site.css (the public
+   marketing site). */
+.admin-app { display: flex; min-height: 100vh; font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; }
+.admin-sidebar { width: 200px; background: #fff; border-right: 1px solid #e5e7eb; padding: 16px 10px; flex-shrink: 0; }
+.admin-sidebar .brand { font-weight: 800; margin: 4px 8px 20px; }
+.admin-sidebar a { display: block; padding: 9px 10px; margin: 2px 0; border-radius: 8px; color: #394150; text-decoration: none; font-size: 0.92rem; }
+.admin-sidebar a.active, .admin-sidebar a:hover { background: #f0f2f5; color: #111827; font-weight: 700; }
+.admin-main { flex: 1; padding: 24px 28px; background: #f6f7fb; }
+.admin-filterbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 10px; margin-bottom: 14px; }
+.admin-filterbar select, .admin-filterbar input { padding: 7px 9px; border: 1px solid #d1d5db; border-radius: 8px; }
+.admin-filterbar button { padding: 7px 11px; border-radius: 8px; border: 1px solid #111827; background: #111827; color: #fff; cursor: pointer; }
+.admin-grid { display: grid; grid-template-columns: repeat(4, minmax(0,1fr)); gap: 12px; margin-bottom: 18px; }
+.admin-card { background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 14px; }
+.admin-card .label { font-size: 0.78rem; color: #6b7280; }
+.admin-card .value { font-size: 1.5rem; font-weight: 800; margin-top: 4px; }
+.admin-card .value.small { font-size: 1.1rem; }
+.admin-section { margin-top: 20px; }
+.admin-section h2 { font-size: 1.15rem; margin: 0 0 10px; }
+.admin-bars { display: grid; gap: 8px; }
+.admin-barrow { display: grid; grid-template-columns: 110px 1fr 50px; gap: 8px; align-items: center; font-size: 0.85rem; }
+.admin-track { height: 9px; background: #edf0f3; border-radius: 999px; overflow: hidden; }
+.admin-track span { display: block; height: 100%; background: #111827; border-radius: 999px; }
+.admin-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; overflow: hidden; }
+.admin-table th, .admin-table td { padding: 9px 12px; border-bottom: 1px solid #e5e7eb; text-align: left; font-size: 0.88rem; }
+.admin-table th { background: #fafafa; color: #6b7280; }
+.admin-pill { display: inline-block; padding: 3px 8px; border-radius: 999px; font-size: 0.75rem; background: #f3f4f6; }
+.admin-pill.green { background: #ecfdf3; color: #067647; }
+.admin-pill.orange { background: #fff7ed; color: #b54708; }
+.admin-pill.red { background: #fef3f2; color: #b42318; }
+.admin-note { font-size: 0.8rem; color: #6b7280; margin: 6px 0 14px; }
+.admin-muted { color: #6b7280; }
+@media (max-width: 900px) { .admin-grid { grid-template-columns: repeat(2, 1fr); } .admin-sidebar { width: 60px; } .admin-sidebar .brand, .admin-sidebar a span.label { display: none; } }

@@ -1,0 +1,46 @@
+{% extends "admin/base.html" %}
+{% block content %}
+<h1>Expenses</h1>
+{% include "admin/_filters.html" %}
+
+<div class="admin-grid">
+  <div class="admin-card"><div class="label">Est. Gemini (period)</div><div class="value small">&#8377;{{ "{:,.0f}".format(cost.gemini) }}</div></div>
+  <div class="admin-card"><div class="label">Est. AssemblyAI (period)</div><div class="value small">&#8377;{{ "{:,.0f}".format(cost.assemblyai) }}</div></div>
+  <div class="admin-card"><div class="label">Fixed Costs (period)</div><div class="value small">&#8377;{{ "{:,.0f}".format(cost.fixed) }}</div></div>
+  <div class="admin-card"><div class="label">Total Cost (period)</div><div class="value small">&#8377;{{ "{:,.0f}".format(cost.total) }}</div></div>
+</div>
+<p class="admin-note">Gemini and AssemblyAI figures are ESTIMATES (documented call count &times; a configurable per-call cost, and real audio duration &times; AssemblyAI's per-hour rate) -- not metered from actual API usage. Fixed costs below are the only manually-entered, actual figures.</p>
+
+<div class="admin-section">
+  <h2>Unit Economics (period)</h2>
+  <div class="admin-table" style="padding:10px 14px;">
+    <p>Revenue: &#8377;{{ "{:,.2f}".format(revenue) }}</p>
+    <p>Estimated cost: &#8377;{{ "{:,.2f}".format(cost.total) }}</p>
+    <p>Net profit (revenue &minus; estimated cost): &#8377;{{ "{:,.2f}".format(net_profit) }}</p>
+    <p>Est. cost / meeting: &#8377;{{ "{:,.2f}".format(cost_per_meeting) }}</p>
+  </div>
+</div>
+
+<div class="admin-section">
+  <h2>Fixed Costs</h2>
+  <form method="post" action="/{{ slug }}/expenses/fixed-costs" class="admin-filterbar">
+    <input type="month" name="effective_month" value="{{ current_month }}" required>
+    <input type="number" step="0.01" name="amount_inr" placeholder="Amount (INR)" required>
+    <input type="text" name="note" placeholder="Note (e.g. VPS)">
+    <button type="submit">Add</button>
+  </form>
+  <div style="overflow-x:auto">
+  <table class="admin-table">
+    <thead><tr><th>Month</th><th>Amount (INR)</th><th>Note</th><th>Added</th></tr></thead>
+    <tbody>
+    {% for fc in fixed_costs %}
+      <tr><td>{{ fc.effective_month }}</td><td>&#8377;{{ "{:,.2f}".format(fc.amount_inr) }}</td><td>{{ fc.note }}</td><td>{{ fc.created_at[:10] }}</td></tr>
+    {% endfor %}
+    {% if not fixed_costs %}
+      <tr><td colspan="4" class="admin-muted">No fixed costs entered yet.</td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+  </div>
+</div>
+{% endblock %}

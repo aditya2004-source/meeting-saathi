@@ -161,6 +161,14 @@ class Settings(BaseSettings):
     # confirmed.
     max_meeting_duration_seconds: int = 10800  # 3 hours
 
+    # Phase 7 (admin analytics): estimated per-meeting API cost, in INR --
+    # deliberately an estimate, not tracked per-meeting (see
+    # app/admin_analytics.py's module docstring for why). Gemini defaults to
+    # 0 while on the free tier; update this once paid billing is enabled.
+    # AssemblyAI's ~$0.17/hour at a rough reference INR rate.
+    estimated_gemini_cost_per_call_inr: float = 0.0
+    assemblyai_cost_per_hour_inr: float = 14.0
+
     # Razorpay (Phase 6: subscriptions). Get keys from the Razorpay
     # Dashboard > Settings > API Keys; the webhook secret is set separately
     # when configuring the webhook URL (Dashboard > Settings > Webhooks).

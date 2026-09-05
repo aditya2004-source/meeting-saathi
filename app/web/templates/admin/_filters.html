@@ -1,0 +1,17 @@
+<form method="get" class="admin-filterbar">
+  <strong>Period</strong>
+  <select name="preset" onchange="this.form.submit()">
+    <option value="today" {% if preset=='today' %}selected{% endif %}>Today</option>
+    <option value="7d" {% if preset=='7d' %}selected{% endif %}>Last 7 Days</option>
+    <option value="30d" {% if preset=='30d' %}selected{% endif %}>Last 30 Days</option>
+    <option value="year" {% if preset=='year' %}selected{% endif %}>This Year</option>
+    <option value="all" {% if preset=='all' %}selected{% endif %}>All Time</option>
+  </select>
+  <button type="submit">Apply</button>
+</form>
+<form method="get" class="admin-filterbar" style="background:#fbfcfe">
+  <strong>Custom Period</strong>
+  <span class="admin-muted">From</span><input type="date" name="from" value="{{ from_date }}">
+  <span class="admin-muted">To</span><input type="date" name="to" value="{{ to_date }}">
+  <button type="submit">Apply</button>
+</form>
