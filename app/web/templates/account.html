@@ -50,16 +50,39 @@
   </p>
 
   <h2>Privacy &amp; Data</h2>
-  <p class="muted">Deleting your meeting data or your account is coming soon -- not available yet.</p>
+  <p class="muted">Deleting removes the actual transcript/documents from every one of your meetings. This cannot be undone.</p>
   <p>
-    <button type="button" disabled>Delete Meeting Data</button>
-    <button type="button" disabled>Delete Account</button>
+    <button type="button" onclick="deleteMeetingData()">Delete Meeting Data</button>
+    <button type="button" onclick="deleteAccount()" style="color:#b42318;">Delete Account</button>
   </p>
+  <div id="delete-status"></div>
 
   <p><button type="button" onclick="logout()">Logout</button></p>
   <script>
     async function logout() {
       await fetch('/auth/logout', {method: 'POST'});
+      window.location.href = '/';
+    }
+
+    async function deleteMeetingData() {
+      if (!confirm('This permanently deletes the transcript and documents for every one of your meetings. Continue?')) return;
+      const statusEl = document.getElementById('delete-status');
+      const response = await fetch('/account/delete-meeting-data', {method: 'POST'});
+      if (!response.ok) {
+        statusEl.textContent = 'Could not delete meeting data -- please try again.';
+        return;
+      }
+      const {meetings_cleared} = await response.json();
+      statusEl.textContent = `Deleted data for ${meetings_cleared} meeting(s).`;
+    }
+
+    async function deleteAccount() {
+      if (!confirm('This permanently deletes your account, cancels any subscription, and disconnects your extension. Continue?')) return;
+      const response = await fetch('/account/delete-account', {method: 'POST'});
+      if (!response.ok) {
+        document.getElementById('delete-status').textContent = 'Could not delete account -- please try again.';
+        return;
+      }
       window.location.href = '/';
     }
   </script>

@@ -2,14 +2,22 @@
 pairing for the extension. Pure JSON endpoints for now -- Phase 4 builds the
 actual website pages that call these; building the API first (and testing it
 directly) keeps this phase's identity/security work independently verifiable
-without waiting on the UI.
+without waiting on the UI. Phase 8 adds the account/data-deletion endpoints
+at the bottom of this file -- same /account/* namespace, same auth
+dependency.
 """
+import logging
+import shutil
+
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from app import auth, db
+from app.billing import razorpay_client
 from app.email_sender import send_email
 from app.policies import POLICY_VERSION as CURRENT_POLICY_VERSION
+
+logger = logging.getLogger("meeting_saathi")
 
 router = APIRouter()
 
@@ -126,3 +134,48 @@ def create_device_token(request: Request, customer: dict = Depends(auth.get_curr
     label = (request.query_params.get("label") or "Chrome extension").strip()
     token = auth.issue_device_token(customer["id"], label=label)
     return JSONResponse({"token": token})
+
+
+@router.post("/account/delete-meeting-data")
+def delete_meeting_data(customer: dict = Depends(auth.get_current_customer)):
+    """Removes the actual on-disk content (transcript/documents) for every
+    one of this customer's meetings -- a real deletion, not a toast that
+    does nothing. The `meeting_runs` rows themselves are kept (folder_path
+    cleared, everything else untouched) rather than deleted outright, so
+    Phase 7's historical aggregate analytics (meeting volume, success rate)
+    don't retroactively shrink for a period that already happened.
+    """
+    runs = db.list_runs(customer_id=customer["id"], limit=100000)
+    cleared = 0
+    for run in runs:
+        folder_path = run.get("folder_path")
+        if not folder_path:
+            continue
+        shutil.rmtree(folder_path, ignore_errors=True)
+        db.update_run(run["id"], folder_path=None)
+        cleared += 1
+    return JSONResponse({"ok": True, "meetings_cleared": cleared})
+
+
+@router.post("/account/delete-account")
+def delete_account(request: Request, customer: dict = Depends(auth.get_current_customer)):
+    """Real cascading effects: cancels any active Razorpay subscription,
+    revokes every device token (a paired extension must stop working
+    immediately, not keep recording against a "deleted" account), marks the
+    customer inactive (get_current_customer/_customer_from_session/
+    _customer_from_bearer_token in app/auth.py all already reject a
+    non-"active" status, so this alone would be enough even if a token
+    somehow survived revocation), and clears the current session.
+    """
+    subscription = db.get_active_subscription(customer["id"])
+    if subscription and subscription.get("razorpay_subscription_id"):
+        try:
+            razorpay_client.cancel_subscription(subscription["razorpay_subscription_id"])
+        except Exception:  # noqa: BLE001 - a Razorpay API failure must not block account deletion
+            logger.exception("Failed to cancel Razorpay subscription during account deletion")
+        db.update_subscription_status(subscription["razorpay_subscription_id"], status="cancelled")
+
+    db.revoke_all_device_tokens_for_customer(customer["id"])
+    db.set_customer_status(customer["id"], "deleted")
+    request.session.pop("customer_id", None)
+    return JSONResponse({"ok": True})
