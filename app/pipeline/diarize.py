@@ -230,6 +230,57 @@ def _assemblyai_transcribe_and_diarize(
     return _utterances_to_segments(transcript.utterances or [])
 
 
+def _assemblyai_transcribe_only(
+    mixed_audio_path: Path,
+    recorder: Optional[TimingRecorder] = None,
+    stage: str = "chunk_assemblyai_transcribe",
+    repeated: bool = False,
+) -> list[TranscribedSegment]:
+    """Transcription-only AssemblyAI call for diarize_chunk()'s DOM-primary
+    fast path when settings.transcription_provider is forced to
+    "assemblyai" -- speaker attribution comes from speaker_from_dom_events()
+    (the DOM active-speaker timeline), not from AssemblyAI's own
+    speaker_labels, so this returns plain TranscribedSegments (start/end/
+    text), the same shape local transcribe() returns, rather than the
+    already-speaker-tagged SpeakerSegments _assemblyai_transcribe_and_diarize()
+    above returns for the sparse-DOM-coverage fallback branch (which has no
+    DOM signal to attribute from, so it needs AssemblyAI's own diarization).
+
+    Still requests speaker_labels (populating .utterances with per-turn
+    timing) rather than a no-diarization config -- reuses the exact
+    known-working request shape _assemblyai_transcribe_and_diarize() already
+    uses in production, just discarding the .speaker field this call
+    doesn't need, rather than risking an unverified alternate SDK code path
+    for turn-level timestamps without diarization.
+    """
+    import assemblyai as aai
+
+    aai.settings.api_key = settings.assemblyai_api_key
+    config = aai.TranscriptionConfig(
+        speech_models=["universal-3-5-pro", "universal-2"],
+        speaker_labels=True,
+        language_detection=True,
+    )
+
+    def _run():
+        transcript = aai.Transcriber(config=config).transcribe(str(mixed_audio_path))
+        if transcript.status == aai.TranscriptStatus.error:
+            raise RuntimeError(f"AssemblyAI transcription failed: {transcript.error}")
+        return transcript
+
+    if recorder is None:
+        transcript = _run()
+    else:
+        with timed(recorder, stage, repeated=repeated):
+            transcript = _run()
+
+    return [
+        TranscribedSegment(start=utt.start / 1000.0, end=utt.end / 1000.0, text=(utt.text or "").strip())
+        for utt in (transcript.utterances or [])
+        if (utt.text or "").strip()
+    ]
+
+
 def diarize(mixed_audio_path: Path, recorder: Optional[TimingRecorder] = None) -> list[SpeakerSegment]:
     """The Chrome extension hands us one mixed recording (everyone's audio
     combined), so "who said what" always comes from running pyannote's
@@ -282,9 +333,21 @@ def diarize_chunk(
         recorder.record("chunk_dom_coverage", coverage, repeated=True)
 
     if coverage >= threshold:
-        transcribed = transcribe(
-            mixed_audio_path, recorder=recorder, stage="chunk_transcribe", repeated=True
-        )
+        # settings.transcription_provider == "assemblyai" is the Phase 3
+        # switch that makes AssemblyAI genuinely primary (not just the rare
+        # sparse-coverage fallback below) -- confirmed via the SaaS-conversion
+        # audit that merely setting ASSEMBLYAI_API_KEY did NOT change this
+        # branch at all; a VPS sized assuming AssemblyAI does the work still
+        # ran local faster-whisper here for every normal meeting without
+        # this explicit flag.
+        if settings.transcription_provider == "assemblyai" and settings.assemblyai_api_key:
+            transcribed = _assemblyai_transcribe_only(
+                mixed_audio_path, recorder=recorder, stage="chunk_assemblyai_transcribe", repeated=True
+            )
+        else:
+            transcribed = transcribe(
+                mixed_audio_path, recorder=recorder, stage="chunk_transcribe", repeated=True
+            )
         return speaker_from_dom_events(transcribed, speaker_events, chunk_start_offset)
 
     if settings.assemblyai_api_key:

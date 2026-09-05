@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     # path (the common case in a real multi-person meeting) is unaffected
     # and still free/local.
     assemblyai_api_key: str = ""
+    # "auto" (default): unchanged pre-Phase-3 behavior -- AssemblyAI only
+    # ever fires on diarize_chunk()'s sparse-DOM-coverage fallback branch,
+    # local faster-whisper handles the common good-coverage case regardless
+    # of whether a key is set. "assemblyai": genuinely primary -- the
+    # good-coverage branch also uses AssemblyAI (transcription only, DOM
+    # events still supply speaker attribution) instead of local
+    # faster-whisper, so a VPS deploy never needs to run local Whisper for a
+    # normal meeting. Requires assemblyai_api_key to be set; falls back to
+    # "auto" behavior if it isn't (see app/pipeline/diarize.py).
+    transcription_provider: str = "auto"
 
     # Local speech-to-text
     whisper_model_size: str = "small"
@@ -68,6 +78,13 @@ class Settings(BaseSettings):
     # before we trust them as the primary (fast, no audio ML) diarization
     # source; below this, fall back to running pyannote on that chunk.
     chunk_pyannote_coverage_threshold: float = 0.5
+    # How many chunks' transcribe/diarize work app.orchestrator_streaming
+    # runs concurrently (ThreadPoolExecutor(max_workers=...)). Was a fixed
+    # module constant tuned to this one box's 4 real cores -- now
+    # configurable since a Phase 9 VPS deploy (a different core count, and
+    # with transcription_provider="assemblyai" offloading the CPU-heavy work
+    # entirely) shouldn't be stuck with a constant sized for this machine.
+    chunk_executor_max_workers: int = 2
     # speaker_from_dom_events() attributes a segment to the nearest
     # *preceding* DOM speaker-change event, carried forward indefinitely by
     # default. If the extension's MutationObserver stalls (tab backgrounded,

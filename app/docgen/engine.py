@@ -1,5 +1,6 @@
 import json
 import re
+import time
 import traceback
 from typing import Optional
 
@@ -72,20 +73,59 @@ def _repair_invalid_backslash_escapes(text: str) -> str:
 
 _MAX_OUTPUT_TOKENS_CAP = 49152
 
+# Confirmed live (Phase 3's long-transcript verification spike, see
+# scripts/spike_long_transcript.py): a single meeting's document generation
+# already makes ~9 Gemini calls in quick succession, several re-sending the
+# whole transcript -- on the free tier's per-minute input-token quota, this
+# genuinely triggers a 429 RESOURCE_EXHAUSTED mid-run for one meeting alone
+# (observed: the free tier's 250k-tokens/minute cap exhausted partway
+# through one meeting's own document set, not from any other traffic).
+# There was no handling for this at all before -- it just crashed that
+# document's generation, landing on "failed" with no retry.
+_RATE_LIMIT_MAX_RETRIES = 3
+_RATE_LIMIT_FALLBACK_DELAY_SECONDS = 20.0
+
+
+def _retry_delay_seconds(exc: Exception) -> float:
+    """Reads Gemini's own suggested RetryInfo.retryDelay (e.g. "16s") out of
+    a 429 error's details when present, else a fixed fallback -- retrying
+    at the server's own suggested pace is more reliable than guessing.
+    """
+    try:
+        for detail in exc.details.get("error", {}).get("details", []):
+            if detail.get("@type", "").endswith("RetryInfo"):
+                raw = detail.get("retryDelay", "")
+                return float(raw.rstrip("s")) if raw else _RATE_LIMIT_FALLBACK_DELAY_SECONDS
+    except (AttributeError, ValueError, TypeError):
+        pass
+    return _RATE_LIMIT_FALLBACK_DELAY_SECONDS
+
+
+def _generate_content_with_rate_limit_retry(system_prompt: str, response_schema: dict, user_content: str, max_output_tokens: int):
+    from google.genai import errors as genai_errors
+
+    for attempt in range(_RATE_LIMIT_MAX_RETRIES + 1):
+        try:
+            return _client.models.generate_content(
+                model=settings.gemini_model,
+                contents=user_content,
+                config=types.GenerateContentConfig(
+                    system_instruction=system_prompt,
+                    response_mime_type="application/json",
+                    response_json_schema=response_schema,
+                    max_output_tokens=max_output_tokens,
+                ),
+            )
+        except genai_errors.ClientError as exc:
+            if exc.code != 429 or attempt == _RATE_LIMIT_MAX_RETRIES:
+                raise
+            time.sleep(_retry_delay_seconds(exc))
+
 
 def _generate_json(
     system_prompt: str, response_schema: dict, user_content: str, max_output_tokens: int, _retried: bool = False
 ) -> dict:
-    response = _client.models.generate_content(
-        model=settings.gemini_model,
-        contents=user_content,
-        config=types.GenerateContentConfig(
-            system_instruction=system_prompt,
-            response_mime_type="application/json",
-            response_json_schema=response_schema,
-            max_output_tokens=max_output_tokens,
-        ),
-    )
+    response = _generate_content_with_rate_limit_retry(system_prompt, response_schema, user_content, max_output_tokens)
     text = response.text or ""
     try:
         return json.loads(text)

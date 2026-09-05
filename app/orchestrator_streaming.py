@@ -54,7 +54,7 @@ _PAST_CHUNK_PROCESSING = {"extracting_facts", "generating_docs", "rendering", "s
 # in-flight CPU threads roughly matched to real core count instead of
 # wildly oversubscribing it (see also settings.whisper_cpu_threads /
 # settings.pyannote_torch_threads, reduced alongside this cap).
-_CHUNK_EXECUTOR = ThreadPoolExecutor(max_workers=2)
+_CHUNK_EXECUTOR = ThreadPoolExecutor(max_workers=settings.chunk_executor_max_workers)
 
 
 def accept_chunk(
