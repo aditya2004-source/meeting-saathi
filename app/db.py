@@ -356,16 +356,21 @@ def list_runs(
     return [dict(row) for row in rows]
 
 
-def distinct_client_names(user_name: Optional[str] = None) -> list[str]:
+def distinct_client_names(user_name: Optional[str] = None, customer_id: Optional[str] = None) -> list[str]:
     """Distinct, non-empty client_name values (display strings, not the
     normalized key) -- backs the dashboard's client filter dropdown. Scoped to
-    one person's own meetings when `user_name` is given, same as list_runs().
+    one person's own meetings when `user_name` or `customer_id` is given, same
+    as list_runs() -- without one of these, a real customer's dropdown would
+    leak every other customer's client/project names.
     """
     clauses = ["client_name != ''"]
     params: list[Any] = []
     if user_name:
         clauses.append("user_name = ?")
         params.append(user_name)
+    if customer_id:
+        clauses.append("customer_id = ?")
+        params.append(customer_id)
     where = f"WHERE {' AND '.join(clauses)}"
     with _connect() as conn:
         rows = conn.execute(

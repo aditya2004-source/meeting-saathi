@@ -96,6 +96,12 @@ def _extract_mermaid_blocks(markdown_text: str) -> tuple[str, bool]:
     return _MERMAID_FENCE_RE.sub(_sub, markdown_text), found
 
 
+# Public alias -- Phase 5's in-browser document viewer (app/main.py) reuses
+# this exact transform (client-side Mermaid via the same vendored JS) rather
+# than re-implementing the same fenced-block regex a second time.
+extract_mermaid_blocks = _extract_mermaid_blocks
+
+
 def markdown_to_pdf(markdown_text: str, dest_path: Path) -> Path:
     """Renders straight to a temp file in dest_path's own directory, then
     os.replace()s it into place -- so a reader (the dashboard, the download

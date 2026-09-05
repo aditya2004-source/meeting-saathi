@@ -7,7 +7,29 @@
 </head>
 <body>
   <h1><a href="/" style="color:inherit;text-decoration:none;">Meeting Saathi</a></h1>
-  {% if logout_url %}
+  {% if customer %}
+    <p class="muted">
+      <a href="/account">My Account</a> ·
+      <a href="/feedback">Feedback</a> ·
+      <button type="button" onclick="logout()" style="background:none;border:none;padding:0;color:#2b6cb0;text-decoration:underline;cursor:pointer;font:inherit;">Logout</button>
+    </p>
+    <script>
+      async function logout() {
+        await fetch('/auth/logout', {method: 'POST'});
+        window.location.href = '/';
+      }
+    </script>
+    {% if subscription %}
+      <p class="muted">Plan: <strong>{{ subscription.plan | capitalize }}</strong> (active)</p>
+    {% elif trial_exhausted %}
+      <p class="muted" style="color:#b45309;">
+        Your {{ free_meeting_allowance }} free meetings are used up.
+        <a href="/pricing">Upgrade to keep recording</a>.
+      </p>
+    {% else %}
+      <p class="muted">Free trial: {{ customer.free_meetings_used }} of {{ free_meeting_allowance }} meetings used.</p>
+    {% endif %}
+  {% elif logout_url %}
     <p class="muted"><a href="{{ logout_url }}">Logout</a></p>
   {% endif %}
   {% if viewing_name %}
@@ -119,6 +141,7 @@
               <span class="document-label">{{ doc.label }}</span>
               <span class="document-action">
                 {% if doc.status == 'ready' %}
+                  <a href="/dashboard/meetings/{{ run.id }}/documents/{{ doc.key }}">View</a> ·
                   <a href="/meetings/{{ run.id }}/files/{{ doc.pdf_filename }}">Download</a>
                 {% elif doc.status == 'generating' %}
                   <span class="muted">Generating…</span>

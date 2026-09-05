@@ -6,6 +6,7 @@ import time
 import traceback
 from pathlib import Path
 
+import markdown as markdown_lib
 from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
@@ -22,6 +23,7 @@ from app.site_routes import router as site_router
 from app.docgen import registry
 from app.docgen.engine import business_processes_from_facts
 from app.docgen.output import write_generated_document
+from app.docgen.render_pdf import extract_mermaid_blocks
 from app.orchestrator import process_recording
 from app.pipeline.download import working_dir_for
 from app.pipeline.merge import format_meeting_date, render_plain_text
@@ -264,13 +266,43 @@ def index(request: Request, name: str = "", client: str = ""):
     chronological across whichever meetings match).
 
     Moved here from `/` in Phase 4 -- `/` is now the public marketing
-    landing page (see app/site_routes.py); this route's own behavior is
-    otherwise unchanged (Phase 5 is what rescopes it to real customer_id
-    instead of this free-text name). Private route: noindex, matching every
-    other authenticated/account-scoped page.
+    landing page (see app/site_routes.py). Private route: noindex, matching
+    every other authenticated/account-scoped page (see the noindex
+    middleware above, which covers this by path prefix).
+
+    Phase 5: a logged-in customer (real session, from Phase 1's OTP login)
+    is now scoped by their real customer_id -- genuinely secure, unlike
+    `name`, which anyone could type. The `?name=...` path stays exactly as
+    it was for a caller with no session at all (today's founder extension,
+    before it's paired through Phase 4's install flow) -- same transitional
+    reasoning as auth.authorize_run_access().
     """
     name = name.strip()
     client = client.strip()
+    customer = auth.get_current_customer_optional(request)
+    if customer is not None:
+        runs = db.list_runs(customer_id=customer["id"], client_name=client or None)
+        for run in runs:
+            run["started_display"] = _format_started(run["created_at"])
+            run["progress"] = _progress_for_run(run)
+        subscription = db.get_active_subscription(customer["id"])
+        trial_exhausted = subscription is None and customer["free_meetings_used"] >= settings.free_meeting_allowance
+        return templates.TemplateResponse(
+            "index.html",
+            {
+                "request": request,
+                "runs": runs,
+                "usage": [],
+                "viewing_name": customer["name"] or customer["email"],
+                "logout_url": "/auth/logout",
+                "client_filter": client,
+                "client_names": db.distinct_client_names(customer_id=customer["id"]),
+                "customer": customer,
+                "subscription": subscription,
+                "free_meeting_allowance": settings.free_meeting_allowance,
+                "trial_exhausted": trial_exhausted,
+            },
+        )
     if not name:
         return HTMLResponse(
             "<p style='font-family: sans-serif; padding: 2rem;'>Pass your name "
@@ -292,7 +324,31 @@ def index(request: Request, name: str = "", client: str = ""):
             "client_filter": client,
             "client_names": db.distinct_client_names(user_name=name),
         },
-        headers={"X-Robots-Tag": "noindex, nofollow"},
+    )
+
+
+@app.get("/account")
+def account_page(request: Request):
+    """Plan/status + links to versioned policies, per Phase 5's scope.
+    "Manage subscription" (Phase 6) and the delete-my-data/delete-my-account
+    actions (Phase 8) aren't wired to anything real yet -- shown as
+    explicitly disabled rather than faked, since a fake "requested" toast
+    with no real effect would be worse than not having the button at all.
+    Requires a real session -- unlike /dashboard, there's no anonymous
+    fallback that makes sense for an account settings page.
+    """
+    customer = auth.get_current_customer_optional(request)
+    if customer is None:
+        return RedirectResponse(url="/signup", status_code=303)
+    subscription = db.get_active_subscription(customer["id"])
+    return templates.TemplateResponse(
+        "account.html",
+        {
+            "request": request,
+            "customer": customer,
+            "subscription": subscription,
+            "free_meeting_allowance": settings.free_meeting_allowance,
+        },
     )
 
 
@@ -589,6 +645,41 @@ def download_meeting_file(request: Request, run_id: str, filename: str):
     if not file_path.is_file():
         return JSONResponse({"error": "not found"}, status_code=404)
     return FileResponse(file_path, filename=filename)
+
+
+@app.get("/dashboard/meetings/{run_id}/documents/{doc_key}")
+def view_document(request: Request, run_id: str, doc_key: str):
+    """Phase 5's in-browser document viewer -- previously the dashboard only
+    ever linked to the Playwright-rendered PDF (see download_meeting_file
+    above, still available alongside this). Renders the same `.md` source
+    client-side: python-markdown for the prose, and the same
+    extract_mermaid_blocks() transform the PDF path uses (see
+    app/docgen/render_pdf.py) so the Business Process Flow's fenced diagram
+    becomes a <pre class="mermaid"> node the browser's own vendored
+    mermaid.min.js renders live, instead of needing headless Chrome.
+    """
+    if doc_key not in registry.DOCUMENTS:
+        return HTMLResponse("Not found", status_code=404)
+    run = auth.authorize_run_access(request, db.get_run(run_id))
+    if not run.get("folder_path"):
+        return HTMLResponse("Not ready yet", status_code=404)
+    md_filename, pdf_filename = registry.filenames_for(doc_key)
+    md_path = Path(run["folder_path"]) / md_filename
+    if not md_path.is_file():
+        return HTMLResponse("Not ready yet", status_code=404)
+    transformed, has_mermaid = extract_mermaid_blocks(md_path.read_text(encoding="utf-8"))
+    body_html = markdown_lib.markdown(transformed, extensions=["tables", "fenced_code"])
+    return templates.TemplateResponse(
+        "document_view.html",
+        {
+            "request": request,
+            "run": run,
+            "doc_label": registry.DOCUMENTS[doc_key].label,
+            "body_html": body_html,
+            "has_mermaid": has_mermaid,
+            "pdf_filename": pdf_filename,
+        },
+    )
 
 
 @app.post("/meetings/{run_id}/client")

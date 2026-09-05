@@ -1,0 +1,39 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>{{ doc_label }} -- {{ run.title }} -- Meeting Saathi</title>
+  <link rel="stylesheet" href="/static/style.css">
+  {% if has_mermaid %}
+  <script src="/static/vendor/mermaid.min.js"></script>
+  <script>mermaid.initialize({ startOnLoad: false, securityLevel: "loose" });</script>
+  {% endif %}
+  <style>
+    .doc-body { line-height: 1.6; }
+    .doc-body table { border-collapse: collapse; width: 100%; margin: 1rem 0; }
+    .doc-body td, .doc-body th { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
+    pre.mermaid { border: none; background: none; text-align: center; }
+    pre.mermaid svg { max-width: 100%; height: auto; }
+    .ai-disclaimer { background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 12px 14px; margin-bottom: 1.5rem; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <p><a href="/dashboard">&larr; Back to your meetings</a></p>
+  <h1>{{ doc_label }}</h1>
+  <p class="muted">{{ run.title }}</p>
+  <div class="ai-disclaimer">
+    AI-generated content may contain errors, omissions, or misinterpretations --
+    please review before relying on it or sharing it. See our
+    <a href="/legal/ai-disclaimer">AI Disclaimer</a>.
+  </div>
+  <p><a href="/meetings/{{ run.id }}/files/{{ pdf_filename }}">Download PDF</a></p>
+  <div class="doc-body">{{ body_html | safe }}</div>
+  {% if has_mermaid %}
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      mermaid.run({ querySelector: "pre.mermaid", suppressErrors: true });
+    });
+  </script>
+  {% endif %}
+</body>
+</html>
