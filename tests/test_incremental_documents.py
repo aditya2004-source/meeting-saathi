@@ -64,7 +64,7 @@ def test_dashboard_shows_generate_buttons_for_documents_not_yet_generated(tmp_pa
     }
     _patch_list_runs(monkeypatch, run_row)
 
-    response = client.get("/", params={"name": "Priya Shah"})
+    response = client.get("/dashboard", params={"name": "Priya Shah"})
 
     assert response.status_code == 200
     # MOM already has a .pdf on disk -- ready, with a download link.
@@ -95,7 +95,7 @@ def test_dashboard_shows_download_links_for_every_ready_document(tmp_path, monke
     }
     _patch_list_runs(monkeypatch, run_row)
 
-    response = client.get("/", params={"name": "Priya Shah"})
+    response = client.get("/dashboard", params={"name": "Priya Shah"})
 
     assert response.status_code == 200
     assert "/meetings/r1/files/MOM.pdf" in response.text
@@ -118,7 +118,7 @@ def test_dashboard_shows_client_name_when_set(tmp_path, monkeypatch):
     }
     _patch_list_runs(monkeypatch, run_row)
 
-    response = client.get("/", params={"name": "Priya Shah"})
+    response = client.get("/dashboard", params={"name": "Priya Shah"})
 
     assert response.status_code == 200
     assert "Acme Corp" in response.text

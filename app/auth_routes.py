@@ -9,13 +9,9 @@ from fastapi.responses import JSONResponse
 
 from app import auth, db
 from app.email_sender import send_email
+from app.policies import POLICY_VERSION as CURRENT_POLICY_VERSION
 
 router = APIRouter()
-
-# Bumped only when the policy text itself materially changes (Phase 8 turns
-# this into real versioned content); for now, a single date-stamped constant
-# is enough to prove "what was accepted and when" per consent_records row.
-CURRENT_POLICY_VERSION = "2026-09-05"
 
 
 def _client_ip(request: Request) -> str:

@@ -117,6 +117,34 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_subscriptions_customer_id ON subscriptions (customer_id);
+
+-- SaaS conversion, Phase 4 (website) -- created here (not Phase 8, which
+-- originally owned it) because Phase 4's signup/consent flow and legal
+-- routes both need it before Phase 8 is reached. Phase 8 later adds
+-- founder-facing editing; for now rows are seeded once at startup (see
+-- app/policies.py) with real, versioned content.
+CREATE TABLE IF NOT EXISTS policies (
+    policy_type TEXT NOT NULL,
+    version TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    effective_date TEXT NOT NULL,
+    PRIMARY KEY (policy_type, version)
+);
+
+-- SaaS conversion, Phase 4 (website) -- the first public-facing feedback
+-- surface; Phase 5 adds a logged-in link that pre-fills customer_id, Phase
+-- 7 reads this same table for the admin inbox.
+CREATE TABLE IF NOT EXISTS feedback (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT,
+    email TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'general',
+    message TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'new',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_feedback_status ON feedback (status);
 """
 
 # Text stamped into error_message by /meetings/{id}/cancel when a recording
@@ -646,6 +674,69 @@ def get_active_subscription(customer_id: str) -> Optional[dict[str, Any]]:
             (customer_id, _now()),
         ).fetchone()
     return dict(row) if row else None
+
+
+# --- Phase 4: policies + feedback -----------------------------------------
+
+
+def upsert_policy(policy_type: str, version: str, title: str, content: str, effective_date: str) -> None:
+    """Idempotent seed -- called at startup (see app/policies.py) so the same
+    version's content is always in sync with what's in code, without ever
+    duplicating a row. A version bump (new `version` value) adds a new row
+    rather than overwriting the old one, so a past consent_records row's
+    policy_version always still resolves to the exact text that was in
+    effect when someone accepted it.
+    """
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO policies (policy_type, version, title, content, effective_date)
+               VALUES (?, ?, ?, ?, ?)
+               ON CONFLICT(policy_type, version) DO UPDATE SET
+                   title = excluded.title, content = excluded.content, effective_date = excluded.effective_date""",
+            (policy_type, version, title, content, effective_date),
+        )
+
+
+def get_policy(policy_type: str, version: Optional[str] = None) -> Optional[dict[str, Any]]:
+    """Without `version`, returns the latest (by effective_date) row for
+    this policy_type -- what every current-facing page (legal routes,
+    signup consent) should link to. A specific `version` looks up exactly
+    that historical text, e.g. to show a customer what they actually agreed
+    to at signup time.
+    """
+    with _connect() as conn:
+        if version:
+            row = conn.execute(
+                "SELECT * FROM policies WHERE policy_type = ? AND version = ?", (policy_type, version)
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM policies WHERE policy_type = ? ORDER BY effective_date DESC LIMIT 1",
+                (policy_type,),
+            ).fetchone()
+    return dict(row) if row else None
+
+
+def create_feedback(message: str, category: str = "general", email: str = "", customer_id: Optional[str] = None) -> dict[str, Any]:
+    feedback_id = str(uuid.uuid4())
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO feedback (id, customer_id, email, category, message, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (feedback_id, customer_id, email, category, message, _now()),
+        )
+        row = conn.execute("SELECT * FROM feedback WHERE id = ?", (feedback_id,)).fetchone()
+    return dict(row)
+
+
+def list_feedback(status: Optional[str] = None) -> list[dict[str, Any]]:
+    where = "WHERE status = ?" if status else ""
+    params = (status,) if status else ()
+    with _connect() as conn:
+        rows = conn.execute(
+            f"SELECT * FROM feedback {where} ORDER BY created_at DESC", params
+        ).fetchall()
+    return [dict(row) for row in rows]
 
 
 def set_client_name(run_id: str, client_name: str) -> dict[str, Any]:

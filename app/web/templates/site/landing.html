@@ -1,0 +1,48 @@
+{% extends "site/base.html" %}
+{% block structured_data %}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Meeting Saathi",
+  "applicationCategory": "BusinessApplication",
+  "operatingSystem": "Chrome",
+  "description": "Records Google Meet calls and generates MOM, Meeting Analysis, and Business Process Flow documents using AI.",
+  "offers": {"@type": "Offer", "price": "0", "priceCurrency": "INR"}
+}
+</script>
+{% endblock %}
+{% block content %}
+<div class="hero">
+  <div class="eyebrow">AI Meeting Assistant for Google Meet</div>
+  <h1>Turn meetings into clear, useful business documents.</h1>
+  <p class="lead">Record your Google Meet and get exactly three outputs: Minutes of Meeting, Meeting Analysis, and Business Process Flow.</p>
+  <a class="btn primary" href="/signup">Start Free</a>
+  <a class="btn" href="/how-it-works">See How It Works</a>
+</div>
+
+<div class="section">
+  <h2>What you get</h2>
+  <p class="sub">Only the documents that matter.</p>
+  <div class="grid">
+    <div class="card"><h3>MOM</h3><p>Structured meeting summary, decisions, and action items.</p></div>
+    <div class="card"><h3>Meeting Analysis</h3><p>Key insights, risks, observations, and important discussion points.</p></div>
+    <div class="card"><h3>Business Process Flow</h3><p>A visual AS-IS flowchart based on the process explained during the meeting.</p></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Simple pricing</h2>
+  <p class="sub">3 meetings free. Then upgrade for unlimited meetings, subject to fair use and a 3-hour maximum per meeting.</p>
+  <a class="btn primary" href="/pricing">See pricing</a>
+</div>
+
+<div class="section">
+  <div class="notice warning">
+    AI-generated documents may contain errors, omissions, or misinterpretations -- always
+    review before relying on them. You are responsible for informing meeting participants
+    and obtaining any consent required before recording. See our
+    <a href="/legal/ai-disclaimer">AI Disclaimer</a>.
+  </div>
+</div>
+{% endblock %}

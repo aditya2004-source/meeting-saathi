@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title }}</title>
+  <meta name="description" content="{{ meta_description }}">
+  <link rel="canonical" href="{{ canonical_url }}">
+  {% if noindex %}<meta name="robots" content="noindex, nofollow">{% endif %}
+  <meta property="og:title" content="{{ page_title }}">
+  <meta property="og:description" content="{{ meta_description }}">
+  <meta property="og:url" content="{{ canonical_url }}">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="{{ og_image_url }}">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ page_title }}">
+  <meta name="twitter:description" content="{{ meta_description }}">
+  <link rel="icon" href="/static/icon48.png">
+  <link rel="apple-touch-icon" href="/static/icon128.png">
+  <meta name="theme-color" content="#111827">
+  <link rel="stylesheet" href="/static/site.css">
+  {% block structured_data %}{% endblock %}
+  {% block extra_head %}{% endblock %}
+</head>
+<body class="site">
+  <div class="topbar">
+    <a class="brand" href="/">Meeting Saathi</a>
+    <div class="nav">
+      <a class="btn" href="/pricing">Pricing</a>
+      <a class="btn" href="/how-it-works">How it works</a>
+      <a class="btn primary" href="/signup">Start Free</a>
+    </div>
+  </div>
+
+  {% block content %}{% endblock %}
+
+  <div class="footer">
+    <div class="footer-inner">
+      <div>&copy; 2026 Meeting Saathi</div>
+      <div>
+        <a href="/legal/terms-of-service">Terms</a>
+        <a href="/legal/privacy-policy">Privacy</a>
+        <a href="/legal/refund-policy">Refund Policy</a>
+        <a href="/legal/ai-disclaimer">AI Disclaimer</a>
+        <a href="/feedback">Feedback</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,104 @@
+/* Public website (Phase 4) -- separate from style.css, which the existing
+   customer/admin meeting dashboard uses and must stay untouched. */
+:root {
+  --ink: #172033;
+  --muted: #6b7280;
+  --border: #e5e7eb;
+  --bg: #f7f8fb;
+  --primary: #111827;
+  --soft: #eef2ff;
+  --success: #0f9d58;
+  --warning: #b45309;
+}
+* { box-sizing: border-box; }
+body.site {
+  margin: 0;
+  font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  background: var(--bg);
+  color: var(--ink);
+}
+.site a { color: inherit; }
+.site .topbar {
+  height: 64px;
+  background: #fff;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 24px;
+  position: sticky;
+  top: 0;
+}
+.site .brand {
+  font-weight: 800;
+  font-size: 1.25rem;
+  text-decoration: none;
+}
+.site .nav { display: flex; gap: 8px; align-items: center; }
+.site .btn {
+  border: 1px solid var(--border);
+  background: #fff;
+  padding: 9px 14px;
+  border-radius: 8px;
+  cursor: pointer;
+  font: inherit;
+  text-decoration: none;
+  display: inline-block;
+}
+.site .btn.primary { background: var(--primary); color: #fff; border-color: var(--primary); }
+.site .hero {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 72px 24px 48px;
+  text-align: center;
+}
+.site .eyebrow {
+  display: inline-block;
+  background: var(--soft);
+  padding: 6px 10px;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  margin-bottom: 16px;
+}
+.site h1 { font-size: 2.6rem; line-height: 1.1; margin: 0 auto 16px; max-width: 760px; }
+.site .lead { font-size: 1.1rem; color: var(--muted); max-width: 640px; margin: 0 auto 24px; }
+.site .section { max-width: 980px; margin: 0 auto; padding: 40px 24px; }
+.site .section h2 { font-size: 1.7rem; margin: 0 0 8px; }
+.site .section p.sub { color: var(--muted); margin: 0 0 24px; }
+.site .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+.site .card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 20px;
+}
+.site .price { font-size: 1.9rem; font-weight: 800; margin: 8px 0; }
+.site .tag { display: inline-block; font-size: 0.75rem; background: #f3f4f6; padding: 4px 8px; border-radius: 999px; }
+.site .panel { max-width: 480px; margin: 40px auto; padding: 0 20px; }
+.site .panel-card { background: #fff; border: 1px solid var(--border); border-radius: 16px; padding: 24px; }
+.site .field { display: block; margin-bottom: 16px; }
+.site .field label { display: block; font-size: 0.85rem; margin-bottom: 6px; }
+.site .field input, .site .field select, .site .field textarea {
+  width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px; font-size: 1rem;
+}
+.site .notice { background: #f9fafb; border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; font-size: 0.9rem; line-height: 1.5; margin: 12px 0; }
+.site .notice.warning { background: #fffbeb; border-color: #fde68a; }
+.site .notice.success { background: #ecfdf3; border-color: #bbf7d0; }
+.site .error-text { color: #b42318; font-size: 0.9rem; margin: 8px 0; }
+.site .steps { counter-reset: step; display: grid; gap: 12px; }
+.site .step { background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.site .step strong { display: block; margin-bottom: 4px; }
+.site article.legal { max-width: 760px; margin: 0 auto; padding: 40px 24px; line-height: 1.7; }
+.site article.legal h1 { text-align: left; font-size: 2rem; }
+.site article.legal h2 { margin-top: 1.75rem; }
+.site .footer { margin-top: 56px; border-top: 1px solid var(--border); background: #fff; padding: 20px 24px; }
+.site .footer-inner {
+  max-width: 980px; margin: 0 auto; display: flex; justify-content: space-between; gap: 16px;
+  flex-wrap: wrap; color: var(--muted); font-size: 0.85rem;
+}
+.site .footer-inner a { margin-right: 14px; text-decoration: none; }
+@media (max-width: 760px) {
+  .site h1 { font-size: 2rem; }
+  .site .grid { grid-template-columns: 1fr; }
+}

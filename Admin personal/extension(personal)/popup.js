@@ -89,8 +89,9 @@ openDashboardBtn.addEventListener("click", async () => {
   const base = serverBaseUrl || DEFAULT_SERVER_BASE_URL;
   // Scopes the dashboard to just this person's own meetings (see
   // app/main.py's index()) -- without this, a customer would see every
-  // other customer's meetings too, not just their own.
-  const url = userName ? `${base}/?name=${encodeURIComponent(userName)}` : base;
+  // other customer's meetings too, not just their own. Moved from `/` to
+  // `/dashboard` in Phase 4 -- `/` is now the public marketing landing page.
+  const url = userName ? `${base}/dashboard?name=${encodeURIComponent(userName)}` : `${base}/dashboard`;
   chrome.tabs.create({ url });
 });
 

@@ -1,0 +1,59 @@
+{% extends "site/base.html" %}
+{% block content %}
+<div class="panel">
+  <div class="panel-card">
+    <h1 style="font-size:1.5rem;margin-top:0;">Review &amp; accept</h1>
+    <p style="color:var(--muted)">One last step before we send your verification code.</p>
+    <div class="notice">
+      <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+        <input id="consentCheck" type="checkbox" style="margin-top:4px" onchange="toggleButton()">
+        <span>
+          I confirm that I have read and agree to the
+          <a href="/legal/terms-of-service" target="_blank">Terms of Service</a>,
+          <a href="/legal/privacy-policy" target="_blank">Privacy Policy</a>,
+          <a href="/legal/refund-policy" target="_blank">Refund Policy</a>, and
+          <a href="/legal/ai-disclaimer" target="_blank">AI Disclaimer</a>.
+          I also understand that I am responsible for informing meeting participants and
+          obtaining any consent or permission required by law before recording.
+        </span>
+      </label>
+    </div>
+    <div id="error" class="error-text" hidden></div>
+    <button id="sendOtpBtn" class="btn primary" style="width:100%" onclick="acceptAndSendOtp()" disabled>Confirm &amp; Send Code</button>
+    <p style="font-size:0.8rem;color:var(--muted)">A verification code can only be sent after you accept the above.</p>
+  </div>
+</div>
+<script>
+const email = {{ email | tojson }};
+
+function toggleButton() {
+  document.getElementById('sendOtpBtn').disabled = !document.getElementById('consentCheck').checked;
+}
+
+async function acceptAndSendOtp() {
+  const errorEl = document.getElementById('error');
+  errorEl.hidden = true;
+  if (!email) {
+    errorEl.textContent = 'Missing email -- please start over.';
+    errorEl.hidden = false;
+    return;
+  }
+  const consentResponse = await fetch('/auth/consent', {method: 'POST', body: new URLSearchParams({email})});
+  if (!consentResponse.ok) {
+    errorEl.textContent = 'Something went wrong -- please try again.';
+    errorEl.hidden = false;
+    return;
+  }
+  const otpResponse = await fetch('/auth/send-otp', {method: 'POST', body: new URLSearchParams({email})});
+  if (!otpResponse.ok) {
+    const body = await otpResponse.json().catch(() => ({}));
+    errorEl.textContent = body.detail === 'too_many_requests'
+      ? 'Too many attempts -- please wait a few minutes and try again.'
+      : 'Could not send a verification code -- please try again.';
+    errorEl.hidden = false;
+    return;
+  }
+  window.location.href = `/signup/verify?email=${encodeURIComponent(email)}`;
+}
+</script>
+{% endblock %}

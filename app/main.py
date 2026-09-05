@@ -17,6 +17,8 @@ from app import auth, db, document_generation_state, entitlement
 from app import orchestrator_streaming
 from app.auth_routes import router as auth_router
 from app.config import settings
+from app.policies import seed_policies
+from app.site_routes import router as site_router
 from app.docgen import registry
 from app.docgen.engine import business_processes_from_facts
 from app.docgen.output import write_generated_document
@@ -44,6 +46,31 @@ app = FastAPI(title="Meeting Saathi")
 templates = Jinja2Templates(directory="app/web/templates")
 app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 app.include_router(auth_router)
+app.include_router(site_router)
+
+# Seeds the four legal policies (ToS/Privacy/Refund/AI-Disclaimer) into the
+# DB idempotently -- see app/policies.py. Same "module import == process
+# startup" pattern as db.init_db()/the stale-run sweep below.
+seed_policies()
+
+# Every private/authenticated route gets `X-Robots-Tag: noindex, nofollow`
+# rather than hand-adding the header to each one -- /dashboard (Phase
+# 1/4/5), /account/* and /auth/* (Phase 1), and the admin path (whatever
+# settings.admin_url_slug is set to) must never be crawlable/indexable.
+# robots.txt/sitemap.xml (app.site_routes) independently never list these
+# either -- this header is the backstop for a direct link or a crawler that
+# ignores robots.txt.
+_NOINDEX_PATH_PREFIXES = ("/dashboard", "/account", "/auth")
+
+
+@app.middleware("http")
+async def _add_noindex_header_for_private_routes(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    is_admin_path = bool(settings.admin_url_slug) and path.startswith(f"/{settings.admin_url_slug}")
+    if is_admin_path or path.startswith(_NOINDEX_PATH_PREFIXES):
+        response.headers["X-Robots-Tag"] = "noindex, nofollow"
+    return response
 
 # The Chrome extension runs as an extension origin (chrome-extension://...),
 # not a normal web origin, so it needs CORS allowed to POST recordings here.
@@ -222,18 +249,25 @@ def _progress_for_run(run: dict) -> dict:
     return progress
 
 
-@app.get("/")
+@app.get("/dashboard")
 def index(request: Request, name: str = "", client: str = ""):
     """`name` (from the extension's "View Dashboard" button, which passes
     its own stored user_name) scopes this to just that person's meetings.
     Without a `name`, there's nothing to scope by -- this is purely the
     customer-facing view now; the old unfiltered "everyone" view (gated by
     a static admin_token in this same query string) has moved to
-    /{admin_url_slug}/dashboard behind a real login (see below), so `/` can
-    never show every customer's meetings again under any query string.
+    /{admin_url_slug}/dashboard behind a real login (see below), so this
+    route can never show every customer's meetings again under any query
+    string.
     `client` optionally scopes further to one client/project -- purely a
     dashboard organization aid, doesn't change ordering (still reverse-
     chronological across whichever meetings match).
+
+    Moved here from `/` in Phase 4 -- `/` is now the public marketing
+    landing page (see app/site_routes.py); this route's own behavior is
+    otherwise unchanged (Phase 5 is what rescopes it to real customer_id
+    instead of this free-text name). Private route: noindex, matching every
+    other authenticated/account-scoped page.
     """
     name = name.strip()
     client = client.strip()
@@ -258,6 +292,7 @@ def index(request: Request, name: str = "", client: str = ""):
             "client_filter": client,
             "client_names": db.distinct_client_names(user_name=name),
         },
+        headers={"X-Robots-Tag": "noindex, nofollow"},
     )
 
 

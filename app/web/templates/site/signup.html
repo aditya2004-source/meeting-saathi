@@ -1,0 +1,40 @@
+{% extends "site/base.html" %}
+{% block content %}
+<div class="panel">
+  <div class="panel-card">
+    <h1 style="font-size:1.5rem;margin-top:0;">Create your account</h1>
+    <p style="color:var(--muted)">Start with 3 free meetings. No card required.</p>
+    <div class="field">
+      <label for="name">Name</label>
+      <input id="name" placeholder="Your name">
+    </div>
+    <div class="field">
+      <label for="email">Email</label>
+      <input id="email" type="email" placeholder="you@example.com">
+    </div>
+    <div id="error" class="error-text" hidden></div>
+    <button class="btn primary" style="width:100%" onclick="continueSignup()">Continue</button>
+  </div>
+</div>
+<script>
+async function continueSignup() {
+  const name = document.getElementById('name').value.trim();
+  const email = document.getElementById('email').value.trim();
+  const errorEl = document.getElementById('error');
+  errorEl.hidden = true;
+  if (!name || !email) {
+    errorEl.textContent = 'Please enter your name and email.';
+    errorEl.hidden = false;
+    return;
+  }
+  const body = new URLSearchParams({name, email});
+  const response = await fetch('/auth/signup', {method: 'POST', body});
+  if (!response.ok) {
+    errorEl.textContent = 'Something went wrong -- please try again.';
+    errorEl.hidden = false;
+    return;
+  }
+  window.location.href = `/signup/consent?email=${encodeURIComponent(email)}&name=${encodeURIComponent(name)}`;
+}
+</script>
+{% endblock %}

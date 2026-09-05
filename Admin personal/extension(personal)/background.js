@@ -545,6 +545,27 @@ async function _doStopRecording() {
   return _settleAfterRecordingEnds(tabId, runId, result);
 }
 
+// SaaS conversion Phase 4: the "Connect Account" pairing flow. The website's
+// /install page (logged in via its own session cookie, see app/site_routes.py)
+// fetches a fresh device token from POST /account/connect/device-token, then
+// relays it here via chrome.runtime.sendMessage(EXTENSION_ID, ...) -- only
+// reachable from an origin listed in manifest.json's externally_connectable
+// (Chrome enforces this, not this listener). No copy-paste, no human-typed
+// access code. sendResponse is called asynchronously (after the storage
+// write completes), so this returns true to keep the message channel open --
+// per Chrome's documented onMessageExternal contract.
+const PAIRING_MESSAGE_TYPE = "MEETING_SAATHI_PAIR";
+
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+  if (!message || message.type !== PAIRING_MESSAGE_TYPE || !message.token) {
+    return false; // not a pairing message -- ignore, let any other listener handle it
+  }
+  chrome.storage.local.set({ deviceToken: message.token }, () => {
+    sendResponse({ ok: true });
+  });
+  return true;
+});
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.target === "offscreen") return; // not for us, offscreen.js handles it
 

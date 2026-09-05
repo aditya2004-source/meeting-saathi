@@ -3,6 +3,8 @@
   "name": "Meeting Saathi (Personal)",
   "version": "1.0.0",
   "description": "Records your Google Meet calls and sends them to your local Meeting Saathi for automatic MOM/Meeting Analysis generation.",
+  "_comment_key": "SaaS conversion Phase 4: pins this extension's ID to a fixed value (see EXTENSION_ID in app/site_routes.py's install page) so the website's /account/connect page always knows which extension ID to chrome.runtime.sendMessage() to pair a device token -- without this, every 'Load unpacked' install would get a random, different id, and the website could never know which one to message for a given customer. This is the public half of a keypair generated once for this purpose; the private half was discarded (never needed again -- this is a stable-id anchor for an unpacked/sideloaded install, not a signed .crx).",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzL9DKRo8WvTbADav2wv3SXmBfcGDnPVd+IIDhHwA4ktEuLBakBJeqPpmgbqJZ/XUCvb8uSwHQehn4FtubF3CxqFYCdEEMsqPwpDs/nVNyNnHRKQU06kBNHXlh6pDbrIZY4uac31c8qQ+2hm1Q6PikJEMY2bHMFyIWyQ3BRqavFcH4zeeuz285AdCZbbjJs/Sx36cUFj20fLxrWBA9n/tJxIffJq7L8u6eswXE+Nqtf1IWXvS2D9/R1JoIkFcoqB/qojRqhBIKjUK03A9UuyqUViyg1LdqhGS0zatbZPcu8ryevZH231oah754uBsFuYU+lQLzx8Smg0LD33eP0Hn6wIDAQAB",
   "permissions": ["tabCapture", "offscreen", "storage", "activeTab", "notifications"],
   "host_permissions": [
     "https://meet.google.com/*",
@@ -12,6 +14,13 @@
     "https://*.ngrok-free.dev/*",
     "https://*.ngrok-free.app/*"
   ],
+  "_comment_externally_connectable": "The 'https://meetingsaathi.example.com/*' entry below is a PLACEHOLDER -- update to the real deployed domain once Phase 9 picks one, and keep it updated before shipping to real customers. localhost:8420 is kept for local development/testing of the pairing flow itself.",
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:8420/*",
+      "https://meetingsaathi.example.com/*"
+    ]
+  },
   "background": {
     "service_worker": "background.js"
   },

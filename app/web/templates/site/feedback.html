@@ -1,0 +1,30 @@
+{% extends "site/base.html" %}
+{% block content %}
+<div class="panel">
+  <div class="panel-card">
+    <h1 style="font-size:1.5rem;margin-top:0;">Send feedback</h1>
+    {% if submitted %}
+      <div class="notice success">Thanks -- your feedback was submitted.</div>
+    {% endif %}
+    <form method="post" action="/feedback">
+      <div class="field">
+        <label for="category">Category</label>
+        <select id="category" name="category">
+          <option value="bug">Bug</option>
+          <option value="feature">Feature Request</option>
+          <option value="general" selected>General Feedback</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="email">Your email (optional, so we can follow up)</label>
+        <input id="email" name="email" type="email" placeholder="you@example.com">
+      </div>
+      <div class="field">
+        <label for="message">Message</label>
+        <textarea id="message" name="message" rows="6" placeholder="Tell us what happened or what you'd like improved." required></textarea>
+      </div>
+      <button class="btn primary" style="width:100%" type="submit">Submit Feedback</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

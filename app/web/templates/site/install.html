@@ -1,0 +1,59 @@
+{% extends "site/base.html" %}
+{% block content %}
+<div class="section" style="max-width:760px">
+  <h1>Install Meeting Saathi</h1>
+  <p class="sub">A one-time setup, step by step.</p>
+  <div class="steps">
+    <div class="step"><strong>1. Download the extension</strong>
+      <a class="btn small" href="/static/meeting-saathi-extension.zip">Download ZIP</a>
+    </div>
+    <div class="step"><strong>2. Extract the ZIP</strong>Keep the extracted folder somewhere permanent -- Chrome loads it from that folder every time it starts.</div>
+    <div class="step"><strong>3. Open Chrome extensions</strong>Go to <code>chrome://extensions</code>.</div>
+    <div class="step"><strong>4. Turn on Developer mode</strong>Use the toggle in the top-right of that page.</div>
+    <div class="step"><strong>5. Load unpacked</strong>Click "Load unpacked" and select the extracted folder.</div>
+    <div class="step"><strong>6. Pin it</strong>Click the puzzle-piece icon in Chrome's toolbar and pin Meeting Saathi.</div>
+    <div class="step">
+      <strong>7. Connect your account</strong>
+      <p>Click below once the extension is loaded. This links it to your Meeting Saathi account -- no code to type in.</p>
+      <button class="btn primary" onclick="connectAccount()">Connect Account</button>
+      <span id="connect-status"></span>
+    </div>
+    <div class="step"><strong>8. Allow microphone access</strong>Chrome will ask for microphone permission the first time you start recording -- allow it.</div>
+  </div>
+  <div class="notice warning" style="margin-top:16px">
+    You are responsible for informing meeting participants and obtaining any consent
+    or permission required by law before recording. See our
+    <a href="/legal/ai-disclaimer">AI Disclaimer</a>.
+  </div>
+  <div style="margin-top:20px"><a class="btn primary" href="/dashboard">Go to Dashboard</a></div>
+</div>
+<script>
+// Kept in sync with Admin personal/extension(personal)/manifest.json's "key"
+// field -- that key pins this exact deterministic id, so every customer's
+// "Load unpacked" install resolves to the same, known extension id.
+const EXTENSION_ID = "bflaaogdbjndnpjadgdnliajmfoihjgf";
+const PAIRING_MESSAGE_TYPE = "MEETING_SAATHI_PAIR";
+
+async function connectAccount() {
+  const statusEl = document.getElementById('connect-status');
+  statusEl.textContent = ' Connecting...';
+  const response = await fetch('/account/connect/device-token', {method: 'POST'});
+  if (!response.ok) {
+    statusEl.textContent = ' Please sign in first.';
+    return;
+  }
+  const {token} = await response.json();
+  if (!window.chrome || !chrome.runtime || !chrome.runtime.sendMessage) {
+    statusEl.textContent = ' Open this page in Chrome with the extension installed, then try again.';
+    return;
+  }
+  chrome.runtime.sendMessage(EXTENSION_ID, {type: PAIRING_MESSAGE_TYPE, token}, (result) => {
+    if (chrome.runtime.lastError || !result || !result.ok) {
+      statusEl.textContent = ' Could not reach the extension -- make sure it is installed and try again.';
+      return;
+    }
+    statusEl.textContent = ' Connected.';
+  });
+}
+</script>
+{% endblock %}
