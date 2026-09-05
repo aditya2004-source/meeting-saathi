@@ -8,4 +8,3 @@ working/*
 !working/.gitkeep
 *.egg-info/
 dist/
-/Admin personal/

@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Meeting Saathi (Personal)",
+  "version": "1.0.0",
+  "description": "Records your Google Meet calls and sends them to your local Meeting Saathi for automatic MOM/Meeting Analysis generation.",
+  "permissions": ["tabCapture", "offscreen", "storage", "activeTab", "notifications"],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "http://localhost:8420/*",
+    "https://*.up.railway.app/*",
+    "https://*.trycloudflare.com/*",
+    "https://*.ngrok-free.dev/*",
+    "https://*.ngrok-free.app/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["content_script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Meeting Saathi",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "commands": {
+    "start-recording": {
+      "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },
+      "description": "Start recording the current Google Meet call"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}
