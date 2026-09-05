@@ -2,7 +2,16 @@
 {% block content %}
 <div class="section">
   <h1>Choose your plan</h1>
-  <p class="sub">Prices shown in INR. International cards are supported at checkout in USD/EUR/GBP.</p>
+  <p class="sub">
+    <label>Currency
+      <select id="currency" onchange="renderPrices()" class="field" style="display:inline-block;width:auto;">
+        <option value="INR">India (INR)</option>
+        <option value="USD">International (USD)</option>
+        <option value="EUR">Europe (EUR)</option>
+        <option value="GBP">UK (GBP)</option>
+      </select>
+    </label>
+  </p>
   <div class="grid">
     <div class="card">
       <span class="tag">Free</span>
@@ -13,17 +22,18 @@
     </div>
     <div class="card">
       <span class="tag">Monthly</span>
-      <div class="price">&#8377;299<span style="font-size:1rem;font-weight:400;">/mo</span></div>
+      <div class="price" id="monthly-price">&#8377;299<span style="font-size:1rem;font-weight:400;">/mo</span></div>
       <p>Unlimited meetings*</p>
-      <a class="btn primary" href="/signup">Choose Monthly</a>
+      <button class="btn primary" onclick="subscribe('monthly')">Choose Monthly</button>
     </div>
     <div class="card">
       <span class="tag">Yearly</span>
-      <div class="price">&#8377;2,999<span style="font-size:1rem;font-weight:400;">/yr</span></div>
+      <div class="price" id="yearly-price">&#8377;2,999<span style="font-size:1rem;font-weight:400;">/yr</span></div>
       <p>Unlimited meetings*</p>
-      <a class="btn primary" href="/signup">Choose Yearly</a>
+      <button class="btn primary" onclick="subscribe('yearly')">Choose Yearly</button>
     </div>
   </div>
+  <div id="error" class="error-text" hidden></div>
   <p style="color:var(--muted);font-size:0.85rem;margin-top:16px;">
     *Maximum 3 hours per meeting. Fair-use and abuse-prevention policies apply -- see our
     <a href="/legal/terms-of-service">Terms of Service</a>. Subscriptions are billed via
@@ -31,4 +41,43 @@
     <a href="/legal/refund-policy">Refund Policy</a>.
   </p>
 </div>
+<script>
+const DISPLAY_PRICES = {
+  INR: ['&#8377;299/mo', '&#8377;2,999/yr'],
+  USD: ['$4.99/mo', '$49.99/yr'],
+  EUR: ['&euro;4.49/mo', '&euro;44.99/yr'],
+  GBP: ['&pound;3.99/mo', '&pound;39.99/yr'],
+};
+
+function renderPrices() {
+  const currency = document.getElementById('currency').value;
+  const [monthly, yearly] = DISPLAY_PRICES[currency];
+  document.getElementById('monthly-price').innerHTML = monthly;
+  document.getElementById('yearly-price').innerHTML = yearly;
+}
+
+async function subscribe(billingCycle) {
+  const errorEl = document.getElementById('error');
+  errorEl.hidden = true;
+  const currency = document.getElementById('currency').value;
+
+  const me = await fetch('/account/me');
+  if (!me.ok) {
+    window.location.href = '/signup';
+    return;
+  }
+
+  const response = await fetch('/billing/subscribe', {
+    method: 'POST',
+    body: new URLSearchParams({billing_cycle: billingCycle, currency}),
+  });
+  if (!response.ok) {
+    errorEl.textContent = 'Could not start checkout -- please try again in a moment.';
+    errorEl.hidden = false;
+    return;
+  }
+  const {checkout_url} = await response.json();
+  window.location.href = checkout_url;
+}
+</script>
 {% endblock %}

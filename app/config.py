@@ -161,6 +161,13 @@ class Settings(BaseSettings):
     # confirmed.
     max_meeting_duration_seconds: int = 10800  # 3 hours
 
+    # Razorpay (Phase 6: subscriptions). Get keys from the Razorpay
+    # Dashboard > Settings > API Keys; the webhook secret is set separately
+    # when configuring the webhook URL (Dashboard > Settings > Webhooks).
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    razorpay_webhook_secret: str = ""
+
     # Output storage
     base_storage_dir: Path = Path.home() / "Downloads" / "Meeting Saathi"
     keep_raw_recording: bool = False

@@ -1,0 +1,146 @@
+"""Phase 6: Razorpay subscription lifecycle -- create, verify (webhook),
+cancel. See app/billing/plans.py for pricing config and
+app/billing/razorpay_client.py for the actual HTTP calls to Razorpay.
+"""
+import datetime
+import hashlib
+import json
+import logging
+
+from fastapi import APIRouter, Depends, Form, HTTPException, Request
+from fastapi.responses import JSONResponse, RedirectResponse
+
+from app import auth, db
+from app.billing import plans, razorpay_client
+
+logger = logging.getLogger("meeting_saathi")
+
+router = APIRouter(prefix="/billing")
+
+
+@router.post("/subscribe")
+def subscribe(
+    request: Request,
+    billing_cycle: str = Form(...),
+    currency: str = Form("INR"),
+    customer: dict = Depends(auth.get_current_customer),
+):
+    plan = plans.get_plan(billing_cycle, currency)
+    if plan is None:
+        raise HTTPException(status_code=400, detail="unknown_plan")
+
+    razorpay_customer_id = razorpay_client.find_or_create_customer(customer["email"], customer["name"])
+    subscription_payload = razorpay_client.create_subscription(
+        plan.razorpay_plan_id, razorpay_customer_id, notes={"customer_id": customer["id"]}
+    )
+    db.create_pending_subscription(
+        customer_id=customer["id"],
+        plan=billing_cycle,
+        currency=plan.currency,
+        razorpay_subscription_id=subscription_payload["id"],
+    )
+    return JSONResponse({"checkout_url": subscription_payload["short_url"]})
+
+
+@router.post("/cancel")
+def cancel(customer: dict = Depends(auth.get_current_customer)):
+    subscription = db.get_active_subscription(customer["id"])
+    if subscription is None or not subscription.get("razorpay_subscription_id"):
+        raise HTTPException(status_code=404, detail="no_active_subscription")
+    razorpay_client.cancel_subscription(subscription["razorpay_subscription_id"])
+    # The webhook (subscription.cancelled, once Razorpay actually processes
+    # the cancel-at-cycle-end) is the real source of truth for `status`;
+    # this local update is just so the dashboard reflects "cancelling" right
+    # away instead of looking unchanged until that webhook arrives.
+    db.update_subscription_status(subscription["razorpay_subscription_id"], status="cancelling")
+    return JSONResponse({"ok": True})
+
+
+# Razorpay event types this handles. Any other event type is acknowledged
+# (200) but not acted on -- an unhandled event must never make Razorpay
+# retry it forever.
+_HANDLED_EVENTS = {
+    "subscription.activated",
+    "subscription.charged",
+    "subscription.completed",
+    "subscription.cancelled",
+    "subscription.paused",
+    "payment.failed",
+}
+
+
+def _extract_subscription_id(payload: dict) -> str | None:
+    entity = payload.get("payload", {}).get("subscription", {}).get("entity", {})
+    return entity.get("id")
+
+
+def _extract_current_period_end(payload: dict) -> str | None:
+    entity = payload.get("payload", {}).get("subscription", {}).get("entity", {})
+    # Razorpay's subscription entity carries `current_end` as a Unix
+    # timestamp (seconds) -- confirmed against Razorpay's documented
+    # Subscription entity shape; verify against a real webhook payload
+    # before relying on this in production (flagged, same as the plan's own
+    # note on the INR-settlement field name).
+    current_end = entity.get("current_end")
+    if not current_end:
+        return None
+    return datetime.datetime.fromtimestamp(current_end, tz=datetime.timezone.utc).isoformat()
+
+
+@router.post("/webhook/razorpay")
+async def razorpay_webhook(request: Request):
+    raw_body = await request.body()
+    signature = request.headers.get("x-razorpay-signature", "")
+    if not razorpay_client.verify_webhook_signature(raw_body, signature):
+        raise HTTPException(status_code=400, detail="invalid_signature")
+
+    dedup_key = hashlib.sha256(raw_body).hexdigest()
+    payload = json.loads(raw_body)
+    event_type = payload.get("event", "")
+    subscription_id = _extract_subscription_id(payload)
+
+    is_new = db.record_subscription_event(dedup_key, event_type, subscription_id, raw_body.decode("utf-8"))
+    if not is_new:
+        return JSONResponse({"ok": True, "duplicate": True})
+
+    if event_type not in _HANDLED_EVENTS:
+        logger.info("Razorpay webhook: unhandled event type %s, acknowledged and ignored", event_type)
+        return JSONResponse({"ok": True})
+
+    if subscription_id is None:
+        logger.warning("Razorpay webhook: %s had no subscription id in payload", event_type)
+        return JSONResponse({"ok": True})
+
+    subscription = db.get_subscription_by_razorpay_id(subscription_id)
+    if subscription is None:
+        logger.warning("Razorpay webhook: no local subscription for razorpay id %s", subscription_id)
+        return JSONResponse({"ok": True})
+
+    if event_type in ("subscription.activated", "subscription.charged"):
+        db.update_subscription_status(
+            subscription_id, status="active", current_period_end=_extract_current_period_end(payload)
+        )
+        payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
+        if payment_entity.get("id"):
+            db.create_payment(
+                customer_id=subscription["customer_id"],
+                razorpay_subscription_id=subscription_id,
+                razorpay_payment_id=payment_entity["id"],
+                original_currency=payment_entity.get("currency", subscription["currency"]),
+                original_amount_minor=payment_entity.get("amount", 0),
+                status="captured",
+                # Razorpay includes a "base_amount" (in the account's
+                # settlement currency, INR) on international payments per
+                # their documented multi-currency support -- confirm this
+                # exact field name against a real payload before relying on
+                # it for financial reporting (Phase 7).
+                inr_settlement_amount_minor=payment_entity.get("base_amount"),
+            )
+    elif event_type in ("subscription.completed", "subscription.cancelled"):
+        db.update_subscription_status(subscription_id, status="cancelled")
+    elif event_type == "subscription.paused":
+        db.update_subscription_status(subscription_id, status="paused")
+    elif event_type == "payment.failed":
+        logger.warning("Razorpay webhook: payment.failed for subscription %s", subscription_id)
+
+    return JSONResponse({"ok": True})

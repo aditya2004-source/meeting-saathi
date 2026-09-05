@@ -117,6 +117,36 @@ CREATE TABLE IF NOT EXISTS subscriptions (
     updated_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_subscriptions_customer_id ON subscriptions (customer_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_subscriptions_razorpay_id
+    ON subscriptions (razorpay_subscription_id) WHERE razorpay_subscription_id IS NOT NULL;
+
+-- SaaS conversion, Phase 6 (Razorpay). subscription_events is the webhook
+-- idempotency ledger -- dedup_key is a hash of the raw request body, so a
+-- byte-identical webhook retry (Razorpay's own documented retry behavior
+-- on a non-2xx response) is a guaranteed no-op regardless of whether a
+-- more specific per-event id can be extracted from that event type's
+-- payload shape.
+CREATE TABLE IF NOT EXISTS subscription_events (
+    id TEXT PRIMARY KEY,
+    dedup_key TEXT NOT NULL UNIQUE,
+    event_type TEXT NOT NULL,
+    razorpay_subscription_id TEXT,
+    raw_payload TEXT NOT NULL,
+    processed_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS payments (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    razorpay_subscription_id TEXT,
+    razorpay_payment_id TEXT UNIQUE,
+    original_currency TEXT NOT NULL DEFAULT '',
+    original_amount_minor INTEGER NOT NULL DEFAULT 0,
+    inr_settlement_amount_minor INTEGER,
+    status TEXT NOT NULL DEFAULT 'created',
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_payments_customer_id ON payments (customer_id);
 
 -- SaaS conversion, Phase 4 (website) -- created here (not Phase 8, which
 -- originally owned it) because Phase 4's signup/consent flow and legal
@@ -679,6 +709,112 @@ def get_active_subscription(customer_id: str) -> Optional[dict[str, Any]]:
             (customer_id, _now()),
         ).fetchone()
     return dict(row) if row else None
+
+
+# --- Phase 6: Razorpay subscriptions ---------------------------------------
+
+
+def create_pending_subscription(customer_id: str, plan: str, currency: str, razorpay_subscription_id: str) -> dict[str, Any]:
+    """Row created right after Razorpay's create-subscription API call
+    succeeds (status "created" -- not yet paid). The webhook
+    (subscription.activated) is what flips this to "active"; nothing here
+    grants entitlement on its own (see app.entitlement.authorize_new_meeting,
+    which only trusts status == "active").
+    """
+    subscription_id = str(uuid.uuid4())
+    now = _now()
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO subscriptions
+               (id, customer_id, plan, currency, status, razorpay_subscription_id, created_at, updated_at)
+               VALUES (?, ?, ?, ?, 'created', ?, ?, ?)""",
+            (subscription_id, customer_id, plan, currency, razorpay_subscription_id, now, now),
+        )
+    return get_subscription(subscription_id)
+
+
+def get_subscription(subscription_id: str) -> Optional[dict[str, Any]]:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM subscriptions WHERE id = ?", (subscription_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_subscription_by_razorpay_id(razorpay_subscription_id: str) -> Optional[dict[str, Any]]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM subscriptions WHERE razorpay_subscription_id = ?", (razorpay_subscription_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def update_subscription_status(razorpay_subscription_id: str, status: str, current_period_end: Optional[str] = None) -> None:
+    fields = {"status": status, "updated_at": _now()}
+    if current_period_end is not None:
+        fields["current_period_end"] = current_period_end
+    set_clause = ", ".join(f"{key} = ?" for key in fields)
+    with _connect() as conn:
+        conn.execute(
+            f"UPDATE subscriptions SET {set_clause} WHERE razorpay_subscription_id = ?",
+            (*fields.values(), razorpay_subscription_id),
+        )
+
+
+def record_subscription_event(dedup_key: str, event_type: str, razorpay_subscription_id: str, raw_payload: str) -> bool:
+    """Returns True if this event was newly recorded (i.e. should be
+    processed), False if `dedup_key` was already seen (a webhook retry --
+    the caller should treat this as a no-op, not re-apply the event).
+    """
+    try:
+        with _connect() as conn:
+            conn.execute(
+                """INSERT INTO subscription_events
+                   (id, dedup_key, event_type, razorpay_subscription_id, raw_payload, processed_at)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (str(uuid.uuid4()), dedup_key, event_type, razorpay_subscription_id, raw_payload, _now()),
+            )
+        return True
+    except sqlite3.IntegrityError:
+        return False  # dedup_key already exists -- already processed
+
+
+def create_payment(
+    customer_id: str,
+    razorpay_subscription_id: Optional[str],
+    razorpay_payment_id: Optional[str],
+    original_currency: str,
+    original_amount_minor: int,
+    status: str,
+    inr_settlement_amount_minor: Optional[int] = None,
+) -> dict[str, Any]:
+    payment_id = str(uuid.uuid4())
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO payments
+               (id, customer_id, razorpay_subscription_id, razorpay_payment_id, original_currency,
+                original_amount_minor, inr_settlement_amount_minor, status, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                payment_id,
+                customer_id,
+                razorpay_subscription_id,
+                razorpay_payment_id,
+                original_currency,
+                original_amount_minor,
+                inr_settlement_amount_minor,
+                status,
+                _now(),
+            ),
+        )
+        row = conn.execute("SELECT * FROM payments WHERE id = ?", (payment_id,)).fetchone()
+    return dict(row)
+
+
+def list_payments(customer_id: Optional[str] = None) -> list[dict[str, Any]]:
+    where = "WHERE customer_id = ?" if customer_id else ""
+    params = (customer_id,) if customer_id else ()
+    with _connect() as conn:
+        rows = conn.execute(f"SELECT * FROM payments {where} ORDER BY created_at DESC", params).fetchall()
+    return [dict(row) for row in rows]
 
 
 # --- Phase 4: policies + feedback -----------------------------------------

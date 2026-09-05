@@ -17,6 +17,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from app import auth, db, document_generation_state, entitlement
 from app import orchestrator_streaming
 from app.auth_routes import router as auth_router
+from app.billing.routes import router as billing_router
 from app.config import settings
 from app.policies import seed_policies
 from app.site_routes import router as site_router
@@ -49,6 +50,7 @@ templates = Jinja2Templates(directory="app/web/templates")
 app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 app.include_router(auth_router)
 app.include_router(site_router)
+app.include_router(billing_router)
 
 # Seeds the four legal policies (ToS/Privacy/Refund/AI-Disclaimer) into the
 # DB idempotently -- see app/policies.py. Same "module import == process
@@ -62,7 +64,7 @@ seed_policies()
 # robots.txt/sitemap.xml (app.site_routes) independently never list these
 # either -- this header is the backstop for a direct link or a crawler that
 # ignores robots.txt.
-_NOINDEX_PATH_PREFIXES = ("/dashboard", "/account", "/auth")
+_NOINDEX_PATH_PREFIXES = ("/dashboard", "/account", "/auth", "/billing")
 
 
 @app.middleware("http")
