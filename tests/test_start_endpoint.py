@@ -19,7 +19,10 @@ def test_start_allows_a_first_time_user_with_no_name(tmp_path, monkeypatch):
     monkeypatch.setattr(
         db,
         "create_run",
-        lambda title, audio_path, user_name="", client_name="", device_id="": {"id": "r1", "state": "idle"},
+        lambda title, audio_path, user_name="", client_name="", device_id="", customer_id=None, billing_mode="": {
+            "id": "r1",
+            "state": "idle",
+        },
     )
     monkeypatch.setattr(db, "update_run", lambda run_id, **fields: {"id": run_id, "state": fields.get("state")})
 
@@ -33,7 +36,7 @@ def test_start_threads_client_name_and_device_id_to_create_run(tmp_path, monkeyp
     monkeypatch.setattr(settings, "working_dir", tmp_path)
     seen = {}
 
-    def fake_create_run(title, audio_path, user_name="", client_name="", device_id=""):
+    def fake_create_run(title, audio_path, user_name="", client_name="", device_id="", customer_id=None, billing_mode=""):
         seen["user_name"] = user_name
         seen["client_name"] = client_name
         seen["device_id"] = device_id

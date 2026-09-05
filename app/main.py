@@ -1,6 +1,8 @@
+import hmac
 import json
 import logging
 import threading
+import time
 import traceback
 from pathlib import Path
 
@@ -11,8 +13,9 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from app import db, document_generation_state
+from app import auth, db, document_generation_state
 from app import orchestrator_streaming
+from app.auth_routes import router as auth_router
 from app.config import settings
 from app.docgen import registry
 from app.docgen.engine import business_processes_from_facts
@@ -40,12 +43,19 @@ if not logger.handlers:
 app = FastAPI(title="Meeting Saathi")
 templates = Jinja2Templates(directory="app/web/templates")
 app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
+app.include_router(auth_router)
 
 # The Chrome extension runs as an extension origin (chrome-extension://...),
 # not a normal web origin, so it needs CORS allowed to POST recordings here.
+# A wildcard origin was fine when every route was unauthenticated anyway; now
+# that real customer sessions/tokens exist (Phase 1), it's tightened to the
+# specific origins that actually need it. `settings.cors_allowed_origins` is
+# a comma-separated list (env-configurable, since the extension's origin --
+# chrome-extension://<id> -- and the production website domain are both
+# deployment-specific, not something to hardcode here).
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=settings.cors_origins_list,
     allow_methods=["POST", "GET"],
     allow_headers=["*"],
 )
@@ -275,18 +285,52 @@ def admin_login_form(request: Request, slug: str):
     )
 
 
+# Basic brute-force guard on admin login -- in-memory (not DB-backed) is
+# enough here: this is a single-owner login behind an already-unguessable
+# slug, not a high-traffic endpoint worth a real rate-limit library or
+# surviving a restart. Keyed by client IP; a handful of failures within the
+# window blocks further attempts from that IP until it ages out.
+_ADMIN_LOGIN_MAX_FAILURES = 5
+_ADMIN_LOGIN_WINDOW_SECONDS = 300
+_admin_login_failures: dict[str, list[float]] = {}
+
+
+def _admin_login_rate_limited(client_ip: str) -> bool:
+    import time
+
+    now = time.monotonic()
+    attempts = [t for t in _admin_login_failures.get(client_ip, []) if now - t < _ADMIN_LOGIN_WINDOW_SECONDS]
+    _admin_login_failures[client_ip] = attempts
+    return len(attempts) >= _ADMIN_LOGIN_MAX_FAILURES
+
+
+def _record_admin_login_failure(client_ip: str) -> None:
+    import time
+
+    _admin_login_failures.setdefault(client_ip, []).append(time.monotonic())
+
+
+def _credentials_match(username: str, password: str) -> bool:
+    # hmac.compare_digest instead of == -- a plain string compare short-
+    # circuits on the first mismatched character, which leaks (via response
+    # timing) how many characters of the password were guessed correctly.
+    # Real money/customer data sits behind this login now (Phase 1+), so
+    # that's worth closing even though it's a narrow, hard-to-exploit gap.
+    return bool(
+        settings.admin_username
+        and settings.admin_password
+        and hmac.compare_digest(username, settings.admin_username)
+        and hmac.compare_digest(password, settings.admin_password)
+    )
+
+
 @app.post("/{slug}/login")
 def admin_login_submit(
     request: Request, slug: str, username: str = Form(...), password: str = Form(...)
 ):
     if slug != settings.admin_url_slug or not settings.admin_url_slug:
         return _admin_not_found()
-    if (
-        settings.admin_username
-        and settings.admin_password
-        and username == settings.admin_username
-        and password == settings.admin_password
-    ):
+    if _credentials_match(username, password):
         request.session["is_admin"] = True
         return RedirectResponse(url=f"/{slug}/dashboard", status_code=303)
     return RedirectResponse(url=f"/{slug}/login?error=1", status_code=303)
@@ -389,6 +433,7 @@ def _start_processing(
 
 @app.post("/meetings/upload")
 async def upload_meeting(
+    request: Request,
     title: str = Form(...),
     audio: UploadFile = File(...),
     speaker_events: str | None = Form(None),
@@ -397,20 +442,15 @@ async def upload_meeting(
     client_name: str = Form(""),
     device_id: str = Form(""),
 ):
-    """Used by both the Chrome extension (automatic) and the manual form on
-    the status page (fallback/testing): receives a finished recording and
-    kicks off transcription -> diarization -> fact extraction -> save (no
-    document is generated automatically -- see app.docgen.registry).
-    `speaker_events` is optional JSON (see extension/DESIGN.md) used to
-    resolve real speaker names instead of "Speaker N" placeholders.
-    `attendee_roster` is optional JSON, the People-panel attendee list, used
-    as the authoritative Attendees field instead of inferring it from who
-    spoke. `client_name` is an optional client/project label, purely for
-    dashboard organization/filtering. `device_id` is a stable per-extension-
-    install id (see extension/background.js) used only for the admin usage
-    table, so retyping a different display name doesn't fragment one
-    person's usage history.
+    """The legacy whole-file upload path (app.orchestrator, not the chunked/
+    streaming pipeline the real extension uses). Confirmed (Phase 1 audit)
+    that the actual server-backed extension never calls this -- it's only
+    reachable via the manual "testing / fallback" form on the admin
+    dashboard (see app/web/templates/index.html), so it's gated admin-only
+    rather than built out for multi-tenant customer use.
     """
+    if not auth.is_admin_session(request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
     content = await audio.read()
     run = _start_processing(
         title,
@@ -427,11 +467,18 @@ async def upload_meeting(
 
 @app.post("/meetings/upload-form")
 async def upload_meeting_form(
+    request: Request,
     title: str = Form(...),
     audio: UploadFile = File(...),
     user_name: str = Form(""),
     client_name: str = Form(""),
 ):
+    # Same admin-only gate as /meetings/upload above -- this form only ever
+    # renders on the admin's own unfiltered dashboard view (see
+    # app/web/templates/index.html's `{% else %}` branch, shown only when
+    # viewing_name is empty, i.e. never on a customer's `/?name=...` view).
+    if not auth.is_admin_session(request):
+        return JSONResponse({"error": "forbidden"}, status_code=403)
     content = await audio.read()
     _start_processing(
         title, content, audio.filename or "recording.webm", user_name=user_name.strip(), client_name=client_name.strip()
@@ -440,14 +487,14 @@ async def upload_meeting_form(
 
 
 @app.get("/meetings/{run_id}/status")
-def meeting_status(run_id: str):
+def meeting_status(request: Request, run_id: str):
     """Polled every few seconds by app/web/static/status.js so the status
     page updates live without a manual reload -- see app/progress.py for
-    the "progress" field's shape.
+    the "progress" field's shape. See auth.authorize_run_access() for who's
+    allowed to see this: unrestricted for a legacy/unpaired run (customer_id
+    NULL), owner-or-admin-only once a run has a real customer_id.
     """
-    run = db.get_run(run_id)
-    if run is None:
-        return JSONResponse({"error": "not found"}, status_code=404)
+    run = auth.authorize_run_access(request, db.get_run(run_id))
     work_dir = settings.working_dir / run_id
     timing = load_timing(work_dir) if work_dir.exists() else None
     if timing:
@@ -457,7 +504,7 @@ def meeting_status(run_id: str):
 
 
 @app.post("/meetings/{run_id}/cancel")
-def cancel_meeting(run_id: str, reason: str = Form("")):
+def cancel_meeting(request: Request, run_id: str, reason: str = Form("")):
     """Called by extension/background.js in two distinct situations that
     both used to write the exact same generic message, making them
     impossible to tell apart later from the dashboard alone: (1)
@@ -468,23 +515,28 @@ def cancel_meeting(run_id: str, reason: str = Form("")):
     the server. `reason` (now sent by the extension) lets each call site
     say which one actually happened; falls back to the old generic
     message for any older extension install that doesn't send it.
+
+    See auth.authorize_run_access() for who's allowed to cancel: same
+    transitional owner-or-admin-or-unclaimed rule as /status above.
     """
-    run = db.get_run(run_id)
-    if run is None:
-        return JSONResponse({"error": "not found"}, status_code=404)
+    run = auth.authorize_run_access(request, db.get_run(run_id))
     message = reason.strip() or "Recording was cancelled before any audio was captured"
     run = db.mark_failed(run_id, message)
     return JSONResponse({"id": run["id"], "state": run["state"]})
 
 
 @app.get("/meetings/{run_id}/files/{filename}")
-def download_meeting_file(run_id: str, filename: str):
+def download_meeting_file(request: Request, run_id: str, filename: str):
     """Serves one file from a meeting's folder -- added for remote
     deployments (Railway etc.) where nobody has direct filesystem access to
     run["folder_path"] the way a local-machine user can just open their own
     Downloads folder. `filename` is checked against `_DOWNLOADABLE_FILES`
     rather than trusted as a path segment, so this can't be used to read
-    arbitrary files off the server.
+    arbitrary files off the server. See auth.authorize_run_access() for who's
+    allowed to download: same transitional owner-or-admin-or-unclaimed rule
+    used by every other /meetings/{run_id}/... route -- this was previously
+    the most exploitable of the unauthenticated routes, since a bare run_id
+    was enough to read another customer's transcript/documents outright.
 
     Deliberately NOT gated on run["state"] == "saved" -- documents are
     written into the folder incrementally as each one finishes generating
@@ -495,8 +547,8 @@ def download_meeting_file(run_id: str, filename: str):
     """
     if filename not in _DOWNLOADABLE_FILES:
         return JSONResponse({"error": "not found"}, status_code=404)
-    run = db.get_run(run_id)
-    if run is None or not run.get("folder_path"):
+    run = auth.authorize_run_access(request, db.get_run(run_id))
+    if not run.get("folder_path"):
         return JSONResponse({"error": "not found"}, status_code=404)
     file_path = Path(run["folder_path"]) / filename
     if not file_path.is_file():
@@ -505,16 +557,15 @@ def download_meeting_file(run_id: str, filename: str):
 
 
 @app.post("/meetings/{run_id}/client")
-def set_meeting_client(run_id: str, client_name: str = Form("")):
+def set_meeting_client(request: Request, run_id: str, client_name: str = Form("")):
     """Post-hoc "set client/project" edit. The extension's popup has an
     optional client-name field too (see extension/popup.html), but most real
     meetings start automatically without the popup ever opening -- this route
     is the primary way a client/project actually gets attached in practice,
-    from the dashboard, any time after the meeting.
+    from the dashboard, any time after the meeting. See
+    auth.authorize_run_access() for who's allowed to edit this.
     """
-    run = db.get_run(run_id)
-    if run is None:
-        return JSONResponse({"error": "not found"}, status_code=404)
+    auth.authorize_run_access(request, db.get_run(run_id))
     run = db.set_client_name(run_id, client_name.strip())
     return JSONResponse({"id": run["id"], "client_name": run["client_name"]})
 
@@ -568,19 +619,21 @@ def _generate_document_group(run_id: str, group_key: str) -> None:
 
 
 @app.post("/meetings/{run_id}/documents/{doc_key}/generate")
-def generate_document(run_id: str, doc_key: str):
-    """The on-demand generation trigger -- every document (MOM, BRD, FRD, User
-    Stories, Acceptance Criteria, Business Process Flow) is generated only
-    when a user explicitly asks for it from the dashboard, never
-    automatically (see app.orchestrator_streaming.finalize_run(), which now
-    stops at facts.json). Returns immediately; the caller should poll
+def generate_document(request: Request, run_id: str, doc_key: str):
+    """The on-demand generation trigger -- every document (MOM, Meeting
+    Analysis, Business Process Flow) is generated only when a user
+    explicitly asks for it from the dashboard, never automatically (see
+    app.orchestrator_streaming.finalize_run(), which now stops at
+    facts.json). Returns immediately; the caller should poll
     /meetings/{run_id}/status (progress.documents) for status, same pattern
-    as chunk/finalize uploads.
+    as chunk/finalize uploads. See auth.authorize_run_access() for who's
+    allowed to trigger this -- otherwise anyone with a run_id could burn
+    another customer's Gemini quota/cost on demand.
     """
     if doc_key not in registry.DOCUMENTS:
         return JSONResponse({"error": "unknown document"}, status_code=404)
-    run = db.get_run(run_id)
-    if run is None or not run.get("folder_path"):
+    run = auth.authorize_run_access(request, db.get_run(run_id))
+    if not run.get("folder_path"):
         return JSONResponse({"error": "not found"}, status_code=404)
     folder = Path(run["folder_path"])
     if not (folder / "facts.json").is_file() or not (folder / "transcript.json").is_file():
@@ -618,6 +671,7 @@ async def debug_log(source: str = Form(...), event: str = Form(...), detail: str
 
 @app.post("/meetings/start")
 async def start_meeting(
+    request: Request,
     title: str = Form(...),
     user_name: str = Form(""),
     client_name: str = Form(""),
@@ -633,13 +687,24 @@ async def start_meeting(
     per-extension-install id (see extension/background.js) so retyping a
     different display name doesn't fragment one person's usage history in the
     admin panel.
+
+    `customer_id` is stamped from an Authorization: Bearer device token if
+    one is present (an already-paired extension, see app.auth_routes'
+    /account/connect/device-token) -- deliberately optional, not required,
+    so a caller that hasn't been through the pairing flow yet (there is no
+    pairing UI until Phase 4 ships) keeps working exactly as it does today,
+    just without the new per-customer protections that a real customer_id
+    unlocks on every other /meetings/{run_id}/... route (see
+    auth.authorize_run_access()).
     """
+    customer = auth.get_current_customer_optional(request)
     run = db.create_run(
         title=title.strip() or "Untitled Meeting",
         audio_path="",
         user_name=user_name.strip(),
         client_name=client_name.strip(),
         device_id=device_id.strip(),
+        customer_id=customer["id"] if customer else None,
     )
     working_dir_for(run["id"])
     run = db.update_run(run["id"], state="received")
@@ -648,12 +713,14 @@ async def start_meeting(
 
 @app.post("/meetings/{run_id}/chunk")
 async def upload_chunk(
+    request: Request,
     run_id: str,
     sequence: int = Form(...),
     audio: UploadFile = File(...),
     speaker_events: str | None = Form(None),
     attendee_roster: str | None = Form(None),
 ):
+    auth.authorize_run_access(request, db.get_run(run_id))
     content = await audio.read()
     orchestrator_streaming.accept_chunk(
         run_id, sequence, content, speaker_events, attendee_roster, final=False
@@ -663,12 +730,14 @@ async def upload_chunk(
 
 @app.post("/meetings/{run_id}/finalize")
 async def finalize_meeting(
+    request: Request,
     run_id: str,
     sequence: int = Form(...),
     audio: UploadFile = File(...),
     speaker_events: str | None = Form(None),
     attendee_roster: str | None = Form(None),
 ):
+    auth.authorize_run_access(request, db.get_run(run_id))
     content = await audio.read()
     orchestrator_streaming.accept_chunk(
         run_id, sequence, content, speaker_events, attendee_roster, final=True

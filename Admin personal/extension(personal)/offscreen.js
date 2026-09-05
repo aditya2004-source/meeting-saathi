@@ -307,6 +307,14 @@ const UPLOAD_BACKOFF_MS = [1000, 3000, 9000];
 // retry/backoff logic instead of freezing the whole pipeline silently.
 const UPLOAD_TIMEOUT_MS = 20000;
 
+// SaaS conversion Phase 1 -- see background.js's copy of this same helper
+// for the full rationale (an opaque bearer token minted during the
+// not-yet-built "Connect Account" pairing flow, purely additive).
+async function getDeviceToken() {
+  const { deviceToken } = await chrome.storage.local.get("deviceToken");
+  return deviceToken || "";
+}
+
 async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -317,6 +325,10 @@ async function fetchWithTimeout(url, options, timeoutMs) {
     // ngrok's documented way for a known client (this extension) to skip
     // it. Harmless no-op against Railway/Cloudflare/localhost.
     const headers = { ...(options && options.headers), "ngrok-skip-browser-warning": "true" };
+    const deviceToken = await getDeviceToken();
+    if (deviceToken) {
+      headers["Authorization"] = `Bearer ${deviceToken}`;
+    }
     return await fetch(url, { ...options, headers, signal: controller.signal });
   } finally {
     clearTimeout(timeoutId);

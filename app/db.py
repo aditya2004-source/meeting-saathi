@@ -54,6 +54,52 @@ CREATE TABLE IF NOT EXISTS meeting_runs (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+-- SaaS conversion, Phase 1 (identity/auth/tenancy) -----------------------
+
+CREATE TABLE IF NOT EXISTS customers (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL DEFAULT '',
+    email TEXT NOT NULL UNIQUE,
+    email_verified INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'active',
+    free_meetings_used INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL,
+    last_active_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS otp_codes (
+    id TEXT PRIMARY KEY,
+    email TEXT NOT NULL,
+    code_hash TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    consumed_at TEXT,
+    attempt_count INTEGER NOT NULL DEFAULT 0,
+    created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_otp_codes_email ON otp_codes (email);
+
+CREATE TABLE IF NOT EXISTS consent_records (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT,
+    email TEXT NOT NULL,
+    policy_type TEXT NOT NULL,
+    policy_version TEXT NOT NULL,
+    accepted_at TEXT NOT NULL,
+    ip_address TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_consent_records_email ON consent_records (email);
+
+CREATE TABLE IF NOT EXISTS device_tokens (
+    id TEXT PRIMARY KEY,
+    customer_id TEXT NOT NULL,
+    token_hash TEXT NOT NULL UNIQUE,
+    label TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    last_used_at TEXT,
+    revoked_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_device_tokens_customer ON device_tokens (customer_id);
 """
 
 # Text stamped into error_message by /meetings/{id}/cancel when a recording
@@ -92,7 +138,7 @@ def init_db(db_path: Optional[Path] = None) -> None:
     path = db_path or settings.db_path
     conn = sqlite3.connect(path)
     try:
-        conn.execute(_SCHEMA)
+        conn.executescript(_SCHEMA)
         # Idempotent migration for a DB created before user_name existed --
         # CREATE TABLE IF NOT EXISTS above is a no-op on an existing table,
         # so the column has to be added separately here. OperationalError
@@ -102,11 +148,30 @@ def init_db(db_path: Optional[Path] = None) -> None:
             "ALTER TABLE meeting_runs ADD COLUMN client_name TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE meeting_runs ADD COLUMN client_name_normalized TEXT NOT NULL DEFAULT ''",
             "ALTER TABLE meeting_runs ADD COLUMN device_id TEXT NOT NULL DEFAULT ''",
+            # Phase 1 (identity/auth/tenancy): the real ownership key, replacing
+            # the free-text user_name for scoping/authorization purposes.
+            # user_name/device_id stay as-is -- still useful as a display label
+            # and for usage_summary()'s existing grouping.
+            "ALTER TABLE meeting_runs ADD COLUMN customer_id TEXT",
+            # Phase 2 (entitlement engine) will read/write this; the column is
+            # added here, with the rest of Phase 1's schema work, to avoid a
+            # second migration pass over the same table.
+            "ALTER TABLE meeting_runs ADD COLUMN billing_mode TEXT NOT NULL DEFAULT ''",
         ):
             try:
                 conn.execute(column_sql)
             except sqlite3.OperationalError:
                 pass  # column already exists -- this DB was already migrated (or is fresh)
+        # No index existed on this table at all before Phase 1 -- every query
+        # was a full scan. customer_id-scoped lookups (every ownership check
+        # from here on) and admin/analytics queries filtering by state or
+        # created_at are frequent enough now to be worth it.
+        for index_sql in (
+            "CREATE INDEX IF NOT EXISTS idx_meeting_runs_customer_id ON meeting_runs (customer_id)",
+            "CREATE INDEX IF NOT EXISTS idx_meeting_runs_state ON meeting_runs (state)",
+            "CREATE INDEX IF NOT EXISTS idx_meeting_runs_created_at ON meeting_runs (created_at)",
+        ):
+            conn.execute(index_sql)
         conn.commit()
     finally:
         conn.close()
@@ -118,14 +183,17 @@ def create_run(
     user_name: str = "",
     client_name: str = "",
     device_id: str = "",
+    customer_id: Optional[str] = None,
+    billing_mode: str = "",
 ) -> dict[str, Any]:
     run_id = str(uuid.uuid4())
     now = _now()
     with _connect() as conn:
         conn.execute(
             """INSERT INTO meeting_runs
-               (id, title, state, audio_path, user_name, client_name, client_name_normalized, device_id, created_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, title, state, audio_path, user_name, client_name, client_name_normalized,
+                device_id, customer_id, billing_mode, created_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 run_id,
                 title,
@@ -135,6 +203,8 @@ def create_run(
                 client_name,
                 normalize_client_name(client_name),
                 device_id,
+                customer_id,
+                billing_mode,
                 now,
                 now,
             ),
@@ -201,7 +271,10 @@ def get_run(run_id: str) -> Optional[dict[str, Any]]:
 
 
 def list_runs(
-    limit: int = 50, user_name: Optional[str] = None, client_name: Optional[str] = None
+    limit: int = 50,
+    user_name: Optional[str] = None,
+    client_name: Optional[str] = None,
+    customer_id: Optional[str] = None,
 ) -> list[dict[str, Any]]:
     """`user_name` scopes the dashboard to one person's own meetings (see
     /?name=... in app.main.index()) -- without it, this returns every
@@ -210,6 +283,8 @@ def list_runs(
     `client_name` additionally scopes to one client/project (matched via
     normalize_client_name(), same casefold/whitespace-collapse rule used when the
     row was created) -- purely a dashboard organization/filtering aid.
+    `customer_id` is the real (Phase 1) ownership scope -- the customer-facing
+    dashboard should filter by this, not by the free-text `user_name`.
     """
     clauses = []
     params: list[Any] = []
@@ -219,6 +294,9 @@ def list_runs(
     if client_name:
         clauses.append("client_name_normalized = ?")
         params.append(normalize_client_name(client_name))
+    if customer_id:
+        clauses.append("customer_id = ?")
+        params.append(customer_id)
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     with _connect() as conn:
         rows = conn.execute(
@@ -304,6 +382,184 @@ def fail_stale_runs(older_than_minutes: int) -> int:
                  WHERE state NOT IN ({placeholders})
                    AND updated_at < ?""",
             (message, _now(), *_TERMINAL_STATES, cutoff),
+        )
+        return cursor.rowcount
+
+
+# --- Phase 1: customers, OTP, consent, device tokens ---------------------
+# Crypto (hashing codes/tokens, generating random values) lives in app.auth,
+# not here -- this module only ever stores/compares the hashes it's given,
+# same separation the rest of the app already has between "persistence" and
+# "business logic".
+
+
+def create_customer(name: str, email: str) -> dict[str, Any]:
+    customer_id = str(uuid.uuid4())
+    with _connect() as conn:
+        conn.execute(
+            "INSERT INTO customers (id, name, email, created_at) VALUES (?, ?, ?, ?)",
+            (customer_id, name, email, _now()),
+        )
+    return get_customer(customer_id)
+
+
+def get_customer(customer_id: str) -> Optional[dict[str, Any]]:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM customers WHERE id = ?", (customer_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def get_customer_by_email(email: str) -> Optional[dict[str, Any]]:
+    with _connect() as conn:
+        row = conn.execute("SELECT * FROM customers WHERE email = ?", (email,)).fetchone()
+    return dict(row) if row else None
+
+
+def update_customer(customer_id: str, **fields: Any) -> dict[str, Any]:
+    set_clause = ", ".join(f"{key} = ?" for key in fields)
+    values = list(fields.values()) + [customer_id]
+    with _connect() as conn:
+        conn.execute(f"UPDATE customers SET {set_clause} WHERE id = ?", values)
+    customer = get_customer(customer_id)
+    if customer is None:
+        raise KeyError(f"No customer with id {customer_id!r}")
+    return customer
+
+
+def touch_customer_last_active(customer_id: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE customers SET last_active_at = ? WHERE id = ?", (_now(), customer_id)
+        )
+
+
+def create_otp_code(email: str, code_hash: str, ttl_minutes: int) -> dict[str, Any]:
+    otp_id = str(uuid.uuid4())
+    now = datetime.datetime.now(datetime.timezone.utc)
+    expires_at = (now + datetime.timedelta(minutes=ttl_minutes)).isoformat()
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO otp_codes (id, email, code_hash, expires_at, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (otp_id, email, code_hash, expires_at, now.isoformat()),
+        )
+        row = conn.execute("SELECT * FROM otp_codes WHERE id = ?", (otp_id,)).fetchone()
+    return dict(row)
+
+
+def get_latest_otp_code(email: str) -> Optional[dict[str, Any]]:
+    """The most recently created OTP for this email, consumed or not --
+    verify_otp() in app.auth decides what "not usable" means (already
+    consumed, expired, too many attempts); this just hands back the row.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM otp_codes WHERE email = ? ORDER BY created_at DESC LIMIT 1",
+            (email,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def count_recent_otp_requests(email: str, within_minutes: int) -> int:
+    """Backs app.auth's send-otp rate limit -- counts OTPs (successful or
+    not) issued to this email in the last `within_minutes`, regardless of
+    whether any was ever verified.
+    """
+    cutoff = (
+        datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(minutes=within_minutes)
+    ).isoformat()
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT COUNT(*) AS n FROM otp_codes WHERE email = ? AND created_at >= ?",
+            (email, cutoff),
+        ).fetchone()
+    return row["n"]
+
+
+def increment_otp_attempt(otp_id: str) -> int:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE otp_codes SET attempt_count = attempt_count + 1 WHERE id = ?", (otp_id,)
+        )
+        row = conn.execute("SELECT attempt_count FROM otp_codes WHERE id = ?", (otp_id,)).fetchone()
+    return row["attempt_count"]
+
+
+def consume_otp_code(otp_id: str) -> None:
+    with _connect() as conn:
+        conn.execute("UPDATE otp_codes SET consumed_at = ? WHERE id = ?", (_now(), otp_id))
+
+
+def record_consent(
+    email: str, policy_type: str, policy_version: str, ip_address: str = "", customer_id: Optional[str] = None
+) -> dict[str, Any]:
+    consent_id = str(uuid.uuid4())
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO consent_records
+               (id, customer_id, email, policy_type, policy_version, accepted_at, ip_address)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (consent_id, customer_id, email, policy_type, policy_version, _now(), ip_address),
+        )
+        row = conn.execute("SELECT * FROM consent_records WHERE id = ?", (consent_id,)).fetchone()
+    return dict(row)
+
+
+def has_recorded_consent(email: str, policy_types: list[str]) -> bool:
+    """True only if every policy_type in `policy_types` has at least one
+    consent_records row for this email -- signup requires ALL of Terms/
+    Privacy/Refund/AI-Disclaimer/recording-responsibility, not just one.
+    """
+    if not policy_types:
+        return True
+    placeholders = ", ".join("?" for _ in policy_types)
+    with _connect() as conn:
+        row = conn.execute(
+            f"""SELECT COUNT(DISTINCT policy_type) AS n FROM consent_records
+                WHERE email = ? AND policy_type IN ({placeholders})""",
+            (email, *policy_types),
+        ).fetchone()
+    return row["n"] == len(set(policy_types))
+
+
+def create_device_token(customer_id: str, token_hash: str, label: str = "") -> dict[str, Any]:
+    token_id = str(uuid.uuid4())
+    with _connect() as conn:
+        conn.execute(
+            """INSERT INTO device_tokens (id, customer_id, token_hash, label, created_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            (token_id, customer_id, token_hash, label, _now()),
+        )
+        row = conn.execute("SELECT * FROM device_tokens WHERE id = ?", (token_id,)).fetchone()
+    return dict(row)
+
+
+def get_active_device_token_by_hash(token_hash: str) -> Optional[dict[str, Any]]:
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM device_tokens WHERE token_hash = ? AND revoked_at IS NULL",
+            (token_hash,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def touch_device_token_last_used(token_id: str) -> None:
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE device_tokens SET last_used_at = ? WHERE id = ?", (_now(), token_id)
+        )
+
+
+def revoke_all_device_tokens_for_customer(customer_id: str) -> int:
+    """Used by account deletion (Phase 8) and can be used defensively any
+    time a customer is blocked -- a revoked token's hash stays in the table
+    (for audit) but get_active_device_token_by_hash() will never return it
+    again once revoked_at is set.
+    """
+    with _connect() as conn:
+        cursor = conn.execute(
+            "UPDATE device_tokens SET revoked_at = ? WHERE customer_id = ? AND revoked_at IS NULL",
+            (_now(), customer_id),
         )
         return cursor.rowcount
 

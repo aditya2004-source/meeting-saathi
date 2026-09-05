@@ -111,6 +111,13 @@ class Settings(BaseSettings):
     # un-refined version in place rather than failing the document.
     docgen_quality_mode: bool = True
 
+    # Transactional email (OTP codes) -- see app/email_sender.py. Without a
+    # key set, emails are logged instead of sent (loud, obvious, safe for a
+    # from-scratch checkout or the test suite -- never silently pretends to
+    # have delivered something it didn't).
+    resend_api_key: str = ""
+    email_from_address: str = "Meeting Saathi <onboarding@resend.dev>"
+
     # Output storage
     base_storage_dir: Path = Path.home() / "Downloads" / "Meeting Saathi"
     keep_raw_recording: bool = False
@@ -165,6 +172,21 @@ class Settings(BaseSettings):
     # as a secure context too, so this doesn't break local
     # `curl http://127.0.0.1:8420/...` verification either.
     session_cookie_https_only: bool = True
+
+    # Comma-separated list of allowed CORS origins, e.g.
+    # "chrome-extension://abcdefghijklmnop,https://meetingsaathi.com". "*"
+    # (the default, matching pre-Phase-1 behavior) keeps every origin allowed
+    # -- safe to leave as-is for local/self-use, but should be set explicitly
+    # once real customer sessions exist in production, since a wildcard is
+    # unnecessarily permissive against a server that now holds real accounts.
+    # Set via CORS_ALLOWED_ORIGINS in .env.
+    cors_allowed_origins: str = "*"
+
+    @property
+    def cors_origins_list(self) -> list[str]:
+        if self.cors_allowed_origins.strip() == "*":
+            return ["*"]
+        return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
     # Internal paths -- project_root itself is not env-configurable (it's
     # derived from this file's own location), but db_path/working_dir are,

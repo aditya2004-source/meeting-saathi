@@ -36,6 +36,19 @@ async function getServerBaseUrl() {
 // identical to the extension simply doing nothing.
 const FETCH_TIMEOUT_MS = 20000;
 
+// SaaS conversion Phase 1: an opaque bearer token minted server-side during
+// the (not-yet-built, see Phase 4) "Connect Account" pairing flow -- see
+// app/auth.py's issue_device_token()/app/auth_routes.py's
+// /account/connect/device-token. Empty until that pairing UI exists and a
+// person actually connects; every call below already works fine without
+// one (see app.auth.authorize_run_access()'s transitional rule server-side)
+// -- this is purely additive, attaching the header only when a token has
+// actually been stored.
+async function getDeviceToken() {
+  const { deviceToken } = await chrome.storage.local.get("deviceToken");
+  return deviceToken || "";
+}
+
 async function fetchWithTimeout(url, options, timeoutMs) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
@@ -46,6 +59,10 @@ async function fetchWithTimeout(url, options, timeoutMs) {
     // ngrok's documented way for a known client (this extension) to skip
     // it. Harmless no-op against Railway/Cloudflare/localhost.
     const headers = { ...(options && options.headers), "ngrok-skip-browser-warning": "true" };
+    const deviceToken = await getDeviceToken();
+    if (deviceToken) {
+      headers["Authorization"] = `Bearer ${deviceToken}`;
+    }
     return await fetch(url, { ...options, headers, signal: controller.signal });
   } finally {
     clearTimeout(timeoutId);
