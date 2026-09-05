@@ -1,0 +1,42 @@
+# Phase 9: minimal production deployment -- the app container (built from
+# the existing Dockerfile) plus a Caddy reverse proxy that gets automatic
+# HTTPS for free. See DEPLOYMENT.md for the full setup runbook; this file
+# alone is not enough (DNS, .env, and the domain in Caddyfile still need
+# real values filled in by hand).
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DB_PATH=/data/runs.sqlite3
+      - WORKING_DIR=/data/working
+      - BASE_STORAGE_DIR=/data/storage
+    volumes:
+      - meeting_saathi_data:/data
+    expose:
+      - "8420"
+    healthcheck:
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8420/healthz')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+
+volumes:
+  meeting_saathi_data:
+  caddy_data:
+  caddy_config:

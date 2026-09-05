@@ -35,7 +35,7 @@ _PUBLIC_PATHS = [
 # robots.txt -- its entire security property (Phase 1) is that it's
 # unguessable; even a `Disallow:` line would leak it to anyone who reads
 # robots.txt.
-_PRIVATE_DISALLOW_PATHS = ["/account/", "/dashboard", "/dashboard/"]
+_PRIVATE_DISALLOW_PATHS = ["/account/", "/dashboard", "/dashboard/", "/healthz", "/billing/"]
 
 
 def _base_url(request: Request) -> str:

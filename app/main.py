@@ -65,7 +65,7 @@ seed_policies()
 # robots.txt/sitemap.xml (app.site_routes) independently never list these
 # either -- this header is the backstop for a direct link or a crawler that
 # ignores robots.txt.
-_NOINDEX_PATH_PREFIXES = ("/dashboard", "/account", "/auth", "/billing")
+_NOINDEX_PATH_PREFIXES = ("/dashboard", "/account", "/auth", "/billing", "/healthz")
 
 
 @app.middleware("http")
@@ -790,6 +790,23 @@ def generate_document(request: Request, run_id: str, doc_key: str):
 # one /start to get a run_id before recording begins, repeated /chunk calls
 # as MediaRecorder restart-cycles during the call, and one final /finalize
 # call when the meeting ends. See app/orchestrator_streaming.py.
+
+
+@app.get("/healthz")
+def healthz():
+    """Phase 9: for the reverse proxy (Caddy) and any external uptime
+    monitor to check -- no auth (a health check endpoint that itself
+    requires a login isn't useful to infrastructure that doesn't have
+    one), no expensive work, just proof the process is alive and the
+    database is actually reachable (not just that the process started).
+    """
+    try:
+        db.get_run("healthz-check-nonexistent-id")
+        db_ok = True
+    except Exception:  # noqa: BLE001 - report unhealthy, don't crash the health check itself
+        db_ok = False
+    status_code = 200 if db_ok else 503
+    return JSONResponse({"ok": db_ok, "db": db_ok}, status_code=status_code)
 
 
 @app.post("/debug/log")
