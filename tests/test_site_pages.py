@@ -76,7 +76,7 @@ def test_logo_links_home_on_the_dashboard(monkeypatch):
 
     html = client.get("/dashboard", params={"name": "Priya Shah"}).text
 
-    assert '<a href="/"' in html and "Meeting Saathi</a>" in html
+    assert '<a class="wordmark" href="/">' in html and "Meeting Saathi</a>" in html
 
 
 def test_robots_txt_disallows_private_paths_and_never_leaks_the_admin_slug():

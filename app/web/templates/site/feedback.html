@@ -2,7 +2,7 @@
 {% block content %}
 <div class="panel">
   <div class="panel-card">
-    <h1 style="font-size:1.5rem;margin-top:0;">Send feedback</h1>
+    <h1>Send feedback</h1>
     {% if submitted %}
       <div class="notice success">Thanks -- your feedback was submitted.</div>
     {% endif %}
@@ -23,7 +23,7 @@
         <label for="message">Message</label>
         <textarea id="message" name="message" rows="6" placeholder="Tell us what happened or what you'd like improved." required></textarea>
       </div>
-      <button class="btn primary" style="width:100%" type="submit">Submit Feedback</button>
+      <button class="btn primary block" type="submit">Submit Feedback</button>
     </form>
   </div>
 </div>

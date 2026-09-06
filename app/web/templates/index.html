@@ -1,173 +1,195 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Meeting Saathi</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Dashboard -- Meeting Saathi</title>
+  <link rel="icon" href="/static/icon48.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/site.css">
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
-  <h1><a href="/" style="color:inherit;text-decoration:none;">Meeting Saathi</a></h1>
+<body class="site">
+  <div class="topbar">
+    <a class="wordmark" href="/"><span class="mark">MS</span>Meeting Saathi</a>
+    <nav class="nav-links" id="nav-links">
+      {% if customer %}
+        <a href="/account">My Account</a>
+        <a href="/feedback">Feedback</a>
+        <button type="button" class="btn ghost" onclick="logout()">Logout</button>
+      {% elif logout_url %}
+        {% if admin_analytics_url %}<a href="{{ admin_analytics_url }}">Business Analytics</a>{% endif %}
+        <a href="{{ logout_url }}">Logout</a>
+      {% endif %}
+    </nav>
+    <div class="nav-actions">
+      <button class="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="nav-links">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
   {% if customer %}
-    <p class="muted">
-      <a href="/account">My Account</a> ·
-      <a href="/feedback">Feedback</a> ·
-      <button type="button" onclick="logout()" style="background:none;border:none;padding:0;color:#2b6cb0;text-decoration:underline;cursor:pointer;font:inherit;">Logout</button>
-    </p>
     <script>
       async function logout() {
         await fetch('/auth/logout', {method: 'POST'});
         window.location.href = '/';
       }
     </script>
-    {% if subscription %}
-      <p class="muted">Plan: <strong>{{ subscription.plan | capitalize }}</strong> (active)</p>
-    {% elif trial_exhausted %}
-      <p class="muted" style="color:#b45309;">
-        Your {{ free_meeting_allowance }} free meetings are used up.
-        <a href="/pricing">Upgrade to keep recording</a>.
-      </p>
-    {% else %}
-      <p class="muted">Free trial: {{ customer.free_meetings_used }} of {{ free_meeting_allowance }} meetings used.</p>
-    {% endif %}
-  {% elif logout_url %}
-    <p class="muted">
-      {% if admin_analytics_url %}<a href="{{ admin_analytics_url }}">Business Analytics</a> · {% endif %}
-      <a href="{{ logout_url }}">Logout</a>
-    </p>
-  {% endif %}
-  {% if viewing_name %}
-    <p class="muted">Showing meetings for <strong>{{ viewing_name }}</strong> only.</p>
-  {% else %}
-    <p class="muted">
-      Meetings recorded by the Chrome extension show up here automatically.
-      You don't need to do anything on this page day-to-day — it's just a
-      status view.
-    </p>
-
-    <details class="manual-upload">
-      <summary>Manually process an existing recording (testing / fallback)</summary>
-      <form method="post" action="/meetings/upload-form" enctype="multipart/form-data" class="start-form">
-        <label>Your name
-          <input type="text" name="user_name" placeholder="e.g. Priya Shah" required>
-        </label>
-        <label>Meeting title
-          <input type="text" name="title" placeholder="e.g. Weekly Sales Review" required>
-        </label>
-        <label>Client / project <span class="muted">(optional)</span>
-          <input type="text" name="client_name" placeholder="e.g. Acme Corp">
-        </label>
-        <label>Recording file (audio or video)
-          <input type="file" name="audio" accept="audio/*,video/*" required>
-        </label>
-        <button type="submit">Process recording</button>
-      </form>
-    </details>
   {% endif %}
 
-  {% if client_names %}
-  <form method="get" action="" class="client-filter-form">
-    {% if viewing_name %}<input type="hidden" name="name" value="{{ viewing_name }}">{% endif %}
-    <label>Client / project
-      <select name="client" onchange="this.form.submit()">
-        <option value="">All</option>
-        {% for c in client_names %}
-          <option value="{{ c }}" {% if c == client_filter %}selected{% endif %}>{{ c }}</option>
-        {% endfor %}
-      </select>
-    </label>
-  </form>
-  {% endif %}
+  <div class="app-shell">
+    <h1>Your meetings</h1>
 
-  {% if usage %}
-  <h2>Usage by person</h2>
-  <table class="usage-table">
-    <tr><th>Name</th><th>Today</th><th>Total</th><th>Last active</th></tr>
-    {% for u in usage %}
-    <tr><td>{{ u.user_name }}</td><td>{{ u.today }}</td><td>{{ u.total }}</td><td>{{ u.last_active_display }}</td></tr>
-    {% endfor %}
-  </table>
-  {% endif %}
-
-  <h2>Meetings</h2>
-  {% if not runs %}
-    <p class="muted">No meetings yet. Join a Google Meet with the Meeting Saathi
-      Chrome extension installed and it'll appear here once it finishes.</p>
-  {% endif %}
-  {% for run in runs %}
-  <div class="meeting-card state-{{ run.state }}" data-run-id="{{ run.id }}" data-state="{{ run.state }}" data-created-at="{{ run.created_at }}">
-    <div class="meeting-card-top">
-      <div class="meeting-title">{{ run.title }}{% if run.user_name %} <span class="meeting-user">— {{ run.user_name }}</span>{% endif %}</div>
-      <span class="badge status-badge status-{{ run.progress.status | lower }}">{{ run.progress.status }}</span>
-    </div>
-
-    <div class="meeting-started">Started {{ run.started_display }}</div>
-
-    <div class="meeting-client">
-      {% if run.client_name %}
-        <span class="client-badge">{{ run.client_name }}</span>
-      {% else %}
-        <form method="post" action="/meetings/{{ run.id }}/client" class="set-client-form">
-          <input type="text" name="client_name" placeholder="Add client / project" size="20">
-          <button type="submit">Set</button>
-        </form>
-      {% endif %}
-    </div>
-
-    <div class="status-label">{{ run.progress.label if run.state not in ('failed', 'saved') }}</div>
-
-    <div class="progress-bar{% if run.progress.percent is none %} hidden{% endif %}">
-      <div class="progress-bar-fill" style="width: {{ run.progress.percent or 0 }}%"></div>
-    </div>
-    <div class="status-meta">
-      <span class="status-elapsed"></span>
-      <span class="status-percent">{% if run.progress.percent is not none %}{{ run.progress.percent }}%{% endif %}</span>
-      <span class="status-eta">{% if run.progress.eta_seconds is not none %}~{{ (run.progress.eta_seconds // 60) | int }}m {{ (run.progress.eta_seconds % 60) | round | int }}s remaining{% endif %}</span>
-    </div>
-
-    <div class="status-recorded{% if run.progress.recorded == False %} warning{% endif %}">
-      {% if run.progress.recorded == False %}⚠ No audio was captured for this meeting{% endif %}
-    </div>
-    <div class="error status-error">{% if run.state == 'failed' and run.error_message %}{{ run.error_message }}{% endif %}</div>
-
-    <div class="status-result">
-      {% if run.folder_path %}
-        <div class="result-box">
-          {% if 'transcript.txt' in run.progress.available_files %}
-            <div class="download-links">
-              <a href="/meetings/{{ run.id }}/files/transcript.txt">Full transcript</a>
-            </div>
-          {% endif %}
-          {% if run.progress.documents %}
-          <div class="document-catalogue" data-run-id="{{ run.id }}">
-            {% for doc in run.progress.documents %}
-            <div class="document-row document-status-{{ doc.status }}" data-doc-key="{{ doc.key }}">
-              <span class="document-label">{{ doc.label }}</span>
-              <span class="document-action">
-                {% if doc.status == 'ready' %}
-                  <a href="/dashboard/meetings/{{ run.id }}/documents/{{ doc.key }}">View</a> ·
-                  <a href="/meetings/{{ run.id }}/files/{{ doc.pdf_filename }}">Download</a>
-                {% elif doc.status == 'generating' %}
-                  <span class="muted">Generating…</span>
-                {% elif doc.status == 'unavailable' %}
-                  <span class="muted">Not applicable to this meeting</span>
-                {% elif doc.status == 'facts_not_ready' %}
-                  <span class="muted">Not ready yet — still processing</span>
-                {% else %}
-                  <button type="button" class="generate-btn" data-run-id="{{ run.id }}" data-doc-key="{{ doc.key }}">
-                    {% if doc.status == 'failed' %}Retry{% else %}Generate{% endif %}
-                  </button>
-                  {% if doc.status == 'failed' and doc.error %}<span class="document-error">{{ doc.error }}</span>{% endif %}
-                {% endif %}
-              </span>
-            </div>
-            {% endfor %}
-          </div>
-          {% endif %}
+    {% if customer %}
+      {% if subscription %}
+        <div class="notice success">Plan: <strong>{{ subscription.plan | capitalize }}</strong> (active)</div>
+      {% elif trial_exhausted %}
+        <div class="notice warning">
+          Your {{ free_meeting_allowance }} free meetings are used up.
+          <a href="/pricing">Upgrade to keep recording</a>.
         </div>
+      {% else %}
+        <p class="muted">Free trial: {{ customer.free_meetings_used }} of {{ free_meeting_allowance }} meetings used.</p>
       {% endif %}
+    {% endif %}
+
+    {% if viewing_name %}
+      <p class="muted">Showing meetings for <strong>{{ viewing_name }}</strong> only.</p>
+    {% else %}
+      <p class="muted">
+        Meetings recorded by the Chrome extension show up here automatically.
+        You don't need to do anything on this page day-to-day — it's just a
+        status view.
+      </p>
+
+      <details class="manual-upload">
+        <summary>Manually process an existing recording (testing / fallback)</summary>
+        <form method="post" action="/meetings/upload-form" enctype="multipart/form-data" class="start-form">
+          <label>Your name
+            <input type="text" name="user_name" placeholder="e.g. Priya Shah" required>
+          </label>
+          <label>Meeting title
+            <input type="text" name="title" placeholder="e.g. Weekly Sales Review" required>
+          </label>
+          <label>Client / project <span class="muted">(optional)</span>
+            <input type="text" name="client_name" placeholder="e.g. Acme Corp">
+          </label>
+          <label>Recording file (audio or video)
+            <input type="file" name="audio" accept="audio/*,video/*" required>
+          </label>
+          <button type="submit">Process recording</button>
+        </form>
+      </details>
+    {% endif %}
+
+    {% if client_names %}
+    <form method="get" action="" class="client-filter-form">
+      {% if viewing_name %}<input type="hidden" name="name" value="{{ viewing_name }}">{% endif %}
+      <label>Client / project
+        <select name="client" onchange="this.form.submit()">
+          <option value="">All</option>
+          {% for c in client_names %}
+            <option value="{{ c }}" {% if c == client_filter %}selected{% endif %}>{{ c }}</option>
+          {% endfor %}
+        </select>
+      </label>
+    </form>
+    {% endif %}
+
+    {% if usage %}
+    <h2>Usage by person</h2>
+    <table class="usage-table">
+      <tr><th>Name</th><th>Today</th><th>Total</th><th>Last active</th></tr>
+      {% for u in usage %}
+      <tr><td>{{ u.user_name }}</td><td>{{ u.today }}</td><td>{{ u.total }}</td><td>{{ u.last_active_display }}</td></tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
+    <h2>Meetings</h2>
+    {% if not runs %}
+      <p class="muted">No meetings yet. Join a Google Meet with the Meeting Saathi
+        Chrome extension installed and it'll appear here once it finishes.</p>
+    {% endif %}
+    {% for run in runs %}
+    <div class="meeting-card state-{{ run.state }}" data-run-id="{{ run.id }}" data-state="{{ run.state }}" data-created-at="{{ run.created_at }}">
+      <div class="meeting-card-top">
+        <div class="meeting-title">{{ run.title }}{% if run.user_name %} <span class="meeting-user">— {{ run.user_name }}</span>{% endif %}</div>
+        <span class="badge status-badge status-{{ run.progress.status | lower }}">{{ run.progress.status }}</span>
+      </div>
+
+      <div class="meeting-started">Started {{ run.started_display }}</div>
+
+      <div class="meeting-client">
+        {% if run.client_name %}
+          <span class="client-badge">{{ run.client_name }}</span>
+        {% else %}
+          <form method="post" action="/meetings/{{ run.id }}/client" class="set-client-form">
+            <input type="text" name="client_name" placeholder="Add client / project" size="20">
+            <button type="submit">Set</button>
+          </form>
+        {% endif %}
+      </div>
+
+      <div class="status-label">{{ run.progress.label if run.state not in ('failed', 'saved') }}</div>
+
+      <div class="progress-bar{% if run.progress.percent is none %} hidden{% endif %}">
+        <div class="progress-bar-fill" style="width: {{ run.progress.percent or 0 }}%"></div>
+      </div>
+      <div class="status-meta">
+        <span class="status-elapsed"></span>
+        <span class="status-percent">{% if run.progress.percent is not none %}{{ run.progress.percent }}%{% endif %}</span>
+        <span class="status-eta">{% if run.progress.eta_seconds is not none %}~{{ (run.progress.eta_seconds // 60) | int }}m {{ (run.progress.eta_seconds % 60) | round | int }}s remaining{% endif %}</span>
+      </div>
+
+      <div class="status-recorded{% if run.progress.recorded == False %} warning{% endif %}">
+        {% if run.progress.recorded == False %}⚠ No audio was captured for this meeting{% endif %}
+      </div>
+      <div class="error status-error">{% if run.state == 'failed' and run.error_message %}{{ run.error_message }}{% endif %}</div>
+
+      <div class="status-result">
+        {% if run.folder_path %}
+          <div class="result-box">
+            {% if 'transcript.txt' in run.progress.available_files %}
+              <div class="download-links">
+                <a href="/meetings/{{ run.id }}/files/transcript.txt">Full transcript</a>
+              </div>
+            {% endif %}
+            {% if run.progress.documents %}
+            <div class="document-catalogue" data-run-id="{{ run.id }}">
+              {% for doc in run.progress.documents %}
+              <div class="document-row document-status-{{ doc.status }}" data-doc-key="{{ doc.key }}">
+                <span class="document-label">{{ doc.label }}</span>
+                <span class="document-action">
+                  {% if doc.status == 'ready' %}
+                    <a href="/dashboard/meetings/{{ run.id }}/documents/{{ doc.key }}">View</a> ·
+                    <a href="/meetings/{{ run.id }}/files/{{ doc.pdf_filename }}">Download</a>
+                  {% elif doc.status == 'generating' %}
+                    <span class="muted">Generating…</span>
+                  {% elif doc.status == 'unavailable' %}
+                    <span class="muted">Not applicable to this meeting</span>
+                  {% elif doc.status == 'facts_not_ready' %}
+                    <span class="muted">Not ready yet — still processing</span>
+                  {% else %}
+                    <button type="button" class="generate-btn" data-run-id="{{ run.id }}" data-doc-key="{{ doc.key }}">
+                      {% if doc.status == 'failed' %}Retry{% else %}Generate{% endif %}
+                    </button>
+                    {% if doc.status == 'failed' and doc.error %}<span class="document-error">{{ doc.error }}</span>{% endif %}
+                  {% endif %}
+                </span>
+              </div>
+              {% endfor %}
+            </div>
+            {% endif %}
+          </div>
+        {% endif %}
+      </div>
     </div>
+    {% endfor %}
   </div>
-  {% endfor %}
+  <script src="/static/site.js" defer></script>
   <script src="/static/status.js" defer></script>
 </body>
 </html>

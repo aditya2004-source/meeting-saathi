@@ -1,38 +1,98 @@
 <!doctype html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>My Account -- Meeting Saathi</title>
+  <link rel="icon" href="/static/icon48.png">
+  <meta name="robots" content="noindex, nofollow">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/site.css">
   <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
-  <h1><a href="/" style="color:inherit;text-decoration:none;">Meeting Saathi</a></h1>
-  <p class="muted"><a href="/dashboard">My Meetings</a> · <a href="/feedback">Feedback</a></p>
-  <h2>My Account</h2>
-  <p><strong>Name:</strong> {{ customer.name or "(not set)" }}</p>
-  <p><strong>Email:</strong> {{ customer.email }}</p>
-  <p><strong>Plan:</strong>
-    {% if subscription %}{{ subscription.plan | capitalize }} (active){% else %}Free trial
-    -- {{ customer.free_meetings_used }} of {{ free_meeting_allowance }} meetings used{% endif %}
-  </p>
+<body class="site">
+  <div class="topbar">
+    <a class="wordmark" href="/"><span class="mark">MS</span>Meeting Saathi</a>
+    <nav class="nav-links" id="nav-links">
+      <a href="/dashboard">My Meetings</a>
+      <a href="/feedback">Feedback</a>
+      <button type="button" class="btn ghost" onclick="logout()">Logout</button>
+    </nav>
+    <div class="nav-actions">
+      <button class="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="nav-links">
+        <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+  </div>
 
-  <h2>Subscription</h2>
-  {% if subscription %}
-    {% if subscription.cancel_at_period_end %}
-      <p><strong>Status:</strong> Cancelling
-        {% if subscription.current_period_end %}(access ends {{ subscription.current_period_end[:10] }}){% endif %}</p>
-      <p class="muted" style="font-size:0.85rem;">You'll keep access until then -- no further charge after that.</p>
-    {% else %}
-      <p><strong>Status:</strong> {{ subscription.status | capitalize }}
-        {% if subscription.current_period_end %}(renews {{ subscription.current_period_end[:10] }}){% endif %}</p>
-      <button type="button" onclick="cancelSubscription()">Cancel Subscription</button>
-      <p class="muted" style="font-size:0.85rem;">You'll keep access through the end of the period you already paid for.</p>
-    {% endif %}
-  {% else %}
-    <p><a href="/pricing">View plans &amp; upgrade</a></p>
-  {% endif %}
-  <div id="cancel-status"></div>
+  <div class="app-shell" style="max-width:640px;">
+    <h1>My Account</h1>
+
+    <div class="card">
+      <h3>Profile</h3>
+      <p><strong>Name:</strong> {{ customer.name or "(not set)" }}</p>
+      <p><strong>Email:</strong> {{ customer.email }}</p>
+      <p style="margin-top:8px;"><strong>Plan:</strong>
+        {% if subscription %}{{ subscription.plan | capitalize }} (active){% else %}Free trial
+        -- {{ customer.free_meetings_used }} of {{ free_meeting_allowance }} meetings used{% endif %}
+      </p>
+    </div>
+
+    <h2>Subscription</h2>
+    <div class="card">
+      {% if subscription %}
+        {% if subscription.cancel_at_period_end %}
+          <div class="notice warning">
+            <strong>Cancelling</strong>{% if subscription.current_period_end %} -- access ends {{ subscription.current_period_end[:10] }}{% endif %}.
+            You'll keep access until then -- no further charge after that.
+          </div>
+        {% else %}
+          <p><strong>Status:</strong> {{ subscription.status | capitalize }}
+            {% if subscription.current_period_end %}(renews {{ subscription.current_period_end[:10] }}){% endif %}</p>
+          <button type="button" class="btn danger" style="margin-top:8px;" onclick="cancelSubscription()">Cancel Subscription</button>
+          <p class="muted" style="font-size:0.85rem;margin-top:8px;">You'll keep access through the end of the period you already paid for.</p>
+        {% endif %}
+      {% else %}
+        <p class="muted">You're on the free trial.</p>
+        <a class="btn primary" style="margin-top:8px;" href="/pricing">View Plans &amp; Upgrade</a>
+      {% endif %}
+      <div id="cancel-status" class="muted" style="font-size:0.85rem;margin-top:8px;"></div>
+    </div>
+
+    <h2>Legal</h2>
+    <div class="card">
+      <p style="display:flex;gap:16px;flex-wrap:wrap;margin:0;">
+        <a href="/legal/terms-of-service">Terms of Service</a>
+        <a href="/legal/privacy-policy">Privacy Policy</a>
+        <a href="/legal/refund-policy">Refund Policy</a>
+        <a href="/legal/ai-disclaimer">AI Disclaimer</a>
+      </p>
+    </div>
+
+    <h2>Privacy &amp; Data</h2>
+    <div class="card">
+      <p class="muted">Deleting removes the actual transcript/documents from every one of your meetings. This cannot be undone.</p>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:12px;">
+        <button type="button" class="btn" onclick="deleteMeetingData()">Delete Meeting Data</button>
+        <button type="button" class="btn danger" onclick="deleteAccount()">Delete Account</button>
+      </div>
+      <div id="delete-status" class="muted" style="font-size:0.85rem;margin-top:8px;"></div>
+    </div>
+
+    <div style="text-align:center;margin-top:var(--ms-space-6);">
+      <button type="button" class="btn" onclick="logout()">Logout</button>
+    </div>
+  </div>
+
+  <script src="/static/site.js" defer></script>
   <script>
+    async function logout() {
+      await fetch('/auth/logout', {method: 'POST'});
+      window.location.href = '/';
+    }
+
     async function cancelSubscription() {
       const statusEl = document.getElementById('cancel-status');
       const response = await fetch('/billing/cancel', {method: 'POST'});
@@ -42,30 +102,6 @@
       }
       statusEl.textContent = 'Cancellation requested.';
       setTimeout(() => window.location.reload(), 1000);
-    }
-  </script>
-
-  <h2>Legal</h2>
-  <p>
-    <a href="/legal/terms-of-service">Terms of Service</a> ·
-    <a href="/legal/privacy-policy">Privacy Policy</a> ·
-    <a href="/legal/refund-policy">Refund Policy</a> ·
-    <a href="/legal/ai-disclaimer">AI Disclaimer</a>
-  </p>
-
-  <h2>Privacy &amp; Data</h2>
-  <p class="muted">Deleting removes the actual transcript/documents from every one of your meetings. This cannot be undone.</p>
-  <p>
-    <button type="button" onclick="deleteMeetingData()">Delete Meeting Data</button>
-    <button type="button" onclick="deleteAccount()" style="color:#b42318;">Delete Account</button>
-  </p>
-  <div id="delete-status"></div>
-
-  <p><button type="button" onclick="logout()">Logout</button></p>
-  <script>
-    async function logout() {
-      await fetch('/auth/logout', {method: 'POST'});
-      window.location.href = '/';
     }
 
     async function deleteMeetingData() {
