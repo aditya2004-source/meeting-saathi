@@ -53,16 +53,42 @@ document.documentElement.classList.remove('no-js');
 (function () {
   const frames = document.querySelectorAll('.hero-mockup .mockup-frame');
   if (!frames.length) return;
+  const pill = document.querySelector('.hero-mockup .mockup-status-pill');
+  const pillLabel = pill ? pill.querySelector('[data-role="status-label"]') : null;
+
+  function syncPill(frame) {
+    if (!pill) return;
+    pill.classList.remove('is-recording', 'is-processing', 'is-ready');
+    const status = frame.dataset.status;
+    if (status === 'recording') pill.classList.add('is-recording');
+    else if (status === 'processing') pill.classList.add('is-processing');
+    else if (status === 'ready') pill.classList.add('is-ready');
+    if (pillLabel) pillLabel.textContent = frame.dataset.statusLabel || '';
+  }
+
+  syncPill(frames[0]);
+
   if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    frames[frames.length - 1].classList.add('active');
+    frames.forEach((f) => f.classList.remove('active'));
+    const last = frames[frames.length - 1];
+    last.classList.add('active');
+    syncPill(last);
     return;
   }
   let i = 0;
   setInterval(() => {
+    // Fade the outgoing frame out fully before fading the next one in --
+    // frames differ a lot in shape (a single spinner vs. three document
+    // cards), so overlapping the two mid-transition read as clutter rather
+    // than a clean crossfade. Matches the 260ms transition in site.css.
     frames[i].classList.remove('active');
     i = (i + 1) % frames.length;
-    frames[i].classList.add('active');
-  }, 2200);
+    const next = frames[i];
+    setTimeout(() => {
+      next.classList.add('active');
+      syncPill(next);
+    }, 260);
+  }, 2600);
 })();
 
 // --- "See it in action" walkthrough --------------------------------------

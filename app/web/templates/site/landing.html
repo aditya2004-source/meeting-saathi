@@ -44,27 +44,61 @@
        for a <video> here once a real capture exists -- see site.js's
        "Hero animated mockup" block. -->
   <div class="hero-mockup" aria-hidden="true">
-    <div class="mockup-chrome"><span></span><span></span><span></span></div>
+    <div class="mockup-chrome">
+      <div class="mockup-dots"><span></span><span></span><span></span></div>
+      <div class="mockup-meeting-title">Weekly Sync — Google Meet</div>
+      <div class="mockup-status-pill">
+        <span class="dot"></span><span data-role="status-label">Live</span>
+      </div>
+    </div>
     <div class="mockup-stage">
-      <div class="mockup-frame active">
-        <div class="mockup-call-avatar">PS</div>
+      <div class="mockup-frame active" data-status="live" data-status-label="Live">
+        <div class="mockup-participants">
+          <div class="mockup-avatar is-speaking">PS</div>
+          <div class="mockup-avatar alt-1">RM</div>
+          <div class="mockup-avatar alt-2">AK</div>
+        </div>
         <div class="mockup-caption">Google Meet call in progress</div>
       </div>
-      <div class="mockup-frame">
-        <div class="mockup-waveform"><span style="height:14px"></span><span style="height:26px"></span><span style="height:18px"></span><span style="height:32px"></span><span style="height:12px"></span></div>
-        <div class="mockup-caption">Recording…</div>
-      </div>
-      <div class="mockup-frame">
-        <div class="mockup-spinner"></div>
-        <div class="mockup-caption">Transcribing &amp; processing…</div>
-      </div>
-      <div class="mockup-frame">
-        <div class="mockup-docs">
-          <div class="mockup-doc-card">MOM</div>
-          <div class="mockup-doc-card">Meeting Analysis</div>
-          <div class="mockup-doc-card">Business Process Flow</div>
+      <div class="mockup-frame" data-status="recording" data-status-label="Recording">
+        <div class="mockup-waveform">
+          <span style="height:10px"></span><span style="height:24px"></span><span style="height:16px"></span>
+          <span style="height:32px"></span><span style="height:12px"></span><span style="height:28px"></span><span style="height:14px"></span>
         </div>
-        <div class="mockup-caption">Documents ready</div>
+        <div class="mockup-timer">18:42</div>
+        <div class="mockup-caption">Recording your meeting</div>
+      </div>
+      <div class="mockup-frame" data-status="processing" data-status-label="Processing">
+        <div class="mockup-spinner"></div>
+        <div class="mockup-progress-track"><div class="mockup-progress-fill"></div></div>
+        <div class="mockup-caption">Transcribing &amp; analyzing meeting…</div>
+      </div>
+      <div class="mockup-frame" data-status="ready" data-status-label="Ready">
+        <div class="mockup-docs">
+          <div class="mockup-doc-card doc-mom">
+            <div class="doc-card-head"><span class="doc-card-dot"></span>MOM</div>
+            <div class="doc-card-row"><span class="doc-chip check"></span><span class="doc-line w-80"></span></div>
+            <div class="doc-card-row"><span class="doc-chip check"></span><span class="doc-line w-60"></span></div>
+            <div class="doc-card-row"><span class="doc-chip"></span><span class="doc-line w-70"></span></div>
+          </div>
+          <div class="mockup-doc-card doc-analysis">
+            <div class="doc-card-head"><span class="doc-card-dot"></span>Analysis</div>
+            <div class="doc-card-tags"><span class="doc-tag risk">Risk</span><span class="doc-tag decision">Decision</span></div>
+            <span class="doc-line w-90" style="margin-bottom:6px;"></span>
+            <span class="doc-line w-55"></span>
+          </div>
+          <div class="mockup-doc-card doc-bpf">
+            <div class="doc-card-head"><span class="doc-card-dot"></span>Process Flow</div>
+            <svg viewBox="0 0 100 46" class="doc-flow-mini">
+              <path d="M30 13H38"/><path d="M64 13H72"/><path d="M51 20V28"/>
+              <rect x="4" y="6" width="26" height="14" rx="3"/>
+              <rect x="38" y="6" width="26" height="14" rx="3"/>
+              <rect x="72" y="6" width="24" height="14" rx="3"/>
+              <rect x="20" y="28" width="26" height="14" rx="3"/>
+            </svg>
+          </div>
+        </div>
+        <div class="mockup-ready-banner"><span class="tick">&#10003;</span>Documents ready</div>
       </div>
     </div>
     <div class="mockup-note">Illustrative preview — not a recording of a real call</div>
