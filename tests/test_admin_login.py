@@ -15,8 +15,10 @@ https:// URL), and httpx's cookie jar -- correctly -- won't send a Secure
 cookie back over the plain-http default TestClient origin, so login would
 otherwise appear to "not stick" here even though it works fine for real.
 """
+import pytest
 from fastapi.testclient import TestClient
 
+import app.main as main_module
 from app import db
 from app.config import settings
 from app.main import app
@@ -32,6 +34,18 @@ def _patch_admin_settings(monkeypatch):
     monkeypatch.setattr(settings, "admin_url_slug", _SLUG)
     monkeypatch.setattr(settings, "admin_username", _USERNAME)
     monkeypatch.setattr(settings, "admin_password", _PASSWORD)
+
+
+@pytest.fixture(autouse=True)
+def _reset_admin_login_rate_limit_state():
+    # _admin_login_failures is a module-level dict (see app/main.py's
+    # comment on it -- deliberately in-memory, not DB-backed), and every
+    # TestClient in this file shares the same fake client IP, so failures
+    # recorded by one test would otherwise bleed into the next and could
+    # spuriously lock out a later test's "correct credentials" attempt.
+    main_module._admin_login_failures.clear()
+    yield
+    main_module._admin_login_failures.clear()
 
 
 def test_wrong_slug_404s_on_all_three_routes(monkeypatch):
@@ -87,6 +101,55 @@ def test_post_wrong_credentials_redirects_back_with_no_session(monkeypatch):
     assert response.status_code == 303
     assert response.headers["location"] == f"/{_SLUG}/login?error=1"
     assert "session" not in fresh_client.cookies
+
+
+def test_repeated_wrong_credentials_eventually_lock_out_that_ip(monkeypatch):
+    """Production-audit fix: _admin_login_rate_limited()/
+    _record_admin_login_failure() were fully implemented in app/main.py but
+    never actually called -- dead code, so there was no real lockout despite
+    the timing-safe credential comparison. This is real brute-force
+    protection now, not just no-op scaffolding.
+    """
+    _patch_admin_settings(monkeypatch)
+    fresh_client = TestClient(app, base_url="https://testserver")
+
+    for _ in range(main_module._ADMIN_LOGIN_MAX_FAILURES):
+        response = fresh_client.post(
+            f"/{_SLUG}/login",
+            data={"username": _USERNAME, "password": "wrong-password"},
+            follow_redirects=False,
+        )
+        assert response.status_code == 303
+        assert response.headers["location"] == f"/{_SLUG}/login?error=1"
+
+    # The CORRECT password is now rejected too -- the IP is locked out
+    # regardless of credential correctness, not just still blocking guesses.
+    locked_out = fresh_client.post(
+        f"/{_SLUG}/login",
+        data={"username": _USERNAME, "password": _PASSWORD},
+        follow_redirects=False,
+    )
+    assert locked_out.status_code == 303
+    assert locked_out.headers["location"] == f"/{_SLUG}/login?error=1"
+    assert "session" not in fresh_client.cookies
+
+
+def test_a_successful_login_is_not_blocked_by_a_few_earlier_failures(monkeypatch):
+    _patch_admin_settings(monkeypatch)
+    fresh_client = TestClient(app, base_url="https://testserver")
+
+    for _ in range(main_module._ADMIN_LOGIN_MAX_FAILURES - 1):
+        fresh_client.post(
+            f"/{_SLUG}/login", data={"username": _USERNAME, "password": "wrong-password"}, follow_redirects=False
+        )
+
+    response = fresh_client.post(
+        f"/{_SLUG}/login", data={"username": _USERNAME, "password": _PASSWORD}, follow_redirects=False
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == f"/{_SLUG}/dashboard"
+    assert "session" in fresh_client.cookies
 
 
 def test_dashboard_without_session_redirects_to_login(monkeypatch):

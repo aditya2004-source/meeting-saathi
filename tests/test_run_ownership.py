@@ -136,12 +136,19 @@ def test_meetings_start_stamps_customer_id_from_bearer_token(tmp_path, monkeypat
     assert run["customer_id"] == owner["id"]
 
 
-def test_meetings_start_leaves_customer_id_null_without_a_token(tmp_path, monkeypatch):
+def test_meetings_start_requires_authentication(tmp_path, monkeypatch):
+    """Phase 0 production-audit fix: this used to leave customer_id NULL and
+    return 200, which was a genuine trial/payment bypass -- anyone could
+    start unlimited meetings with no login and no token at all, since a NULL
+    customer_id run skipped app.entitlement entirely (see
+    app.main.start_meeting's docstring). A real, resolved customer identity
+    is now required before a new run can be created at all.
+    """
     _fresh_db(tmp_path, monkeypatch)
     monkeypatch.setattr(settings, "working_dir", tmp_path / "working")
+    before = db.list_runs()
 
     response = client.post("/meetings/start", data={"title": "New meeting"})
 
-    assert response.status_code == 200
-    run = db.get_run(response.json()["id"])
-    assert run["customer_id"] is None
+    assert response.status_code == 401
+    assert db.list_runs() == before

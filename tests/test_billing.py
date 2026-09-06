@@ -213,6 +213,32 @@ def test_webhook_cancellation_updates_status(tmp_path, monkeypatch):
     assert db.get_subscription_by_razorpay_id("sub_test123")["status"] == "cancelled"
 
 
+def test_webhook_halted_downgrades_access(tmp_path, monkeypatch):
+    """Production-audit fix: subscription.halted (Razorpay's own "payment
+    retries exhausted" event) was previously not in _HANDLED_EVENTS at all
+    -- a customer whose card kept failing stayed status="active" forever,
+    so db.get_active_subscription() kept granting them unlimited meetings.
+    The real test here is that get_active_subscription() actually stops
+    returning this subscription, not just that the raw status string
+    changed.
+    """
+    _fresh_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings, "razorpay_webhook_secret", "test-secret")
+    customer = _verified_customer("priya@example.com")
+    db.create_pending_subscription(customer["id"], "monthly", "INR", "sub_test123")
+    db.update_subscription_status("sub_test123", status="active")
+    assert db.get_active_subscription(customer["id"]) is not None
+
+    payload = {"event": "subscription.halted", "payload": {"subscription": {"entity": {"id": "sub_test123"}}}}
+    raw, signature = _signed_body("test-secret", payload)
+
+    response = client.post("/billing/webhook/razorpay", content=raw, headers={"X-Razorpay-Signature": signature})
+
+    assert response.status_code == 200
+    assert db.get_subscription_by_razorpay_id("sub_test123")["status"] == "halted"
+    assert db.get_active_subscription(customer["id"]) is None
+
+
 # --- POST /billing/cancel --------------------------------------------------
 
 

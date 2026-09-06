@@ -85,6 +85,17 @@ _MAX_OUTPUT_TOKENS_CAP = 49152
 _RATE_LIMIT_MAX_RETRIES = 3
 _RATE_LIMIT_FALLBACK_DELAY_SECONDS = 20.0
 
+# Production-audit fix: only a 429 (rate limit) was ever retried -- a
+# transient 5xx from Gemini's own infrastructure, or a network-level
+# blip (connection reset, read timeout) talking to it, previously failed
+# that document's generation outright with zero retry. These have no
+# RetryInfo to read a suggested delay from (that's 429-specific), so a
+# short fixed backoff is used instead -- transient infra issues typically
+# clear within a few seconds, unlike a quota reset which can be tens of
+# seconds out.
+_TRANSIENT_ERROR_MAX_RETRIES = 2
+_TRANSIENT_ERROR_BACKOFF_SECONDS = (2.0, 5.0)
+
 
 def _retry_delay_seconds(exc: Exception) -> float:
     """Reads Gemini's own suggested RetryInfo.retryDelay (e.g. "16s") out of
@@ -103,8 +114,11 @@ def _retry_delay_seconds(exc: Exception) -> float:
 
 def _generate_content_with_rate_limit_retry(system_prompt: str, response_schema: dict, user_content: str, max_output_tokens: int):
     from google.genai import errors as genai_errors
+    import httpx
 
-    for attempt in range(_RATE_LIMIT_MAX_RETRIES + 1):
+    rate_limit_attempts = 0
+    transient_attempts = 0
+    while True:
         try:
             return _client.models.generate_content(
                 model=settings.gemini_model,
@@ -117,9 +131,16 @@ def _generate_content_with_rate_limit_retry(system_prompt: str, response_schema:
                 ),
             )
         except genai_errors.ClientError as exc:
-            if exc.code != 429 or attempt == _RATE_LIMIT_MAX_RETRIES:
+            if exc.code != 429 or rate_limit_attempts >= _RATE_LIMIT_MAX_RETRIES:
                 raise
+            rate_limit_attempts += 1
             time.sleep(_retry_delay_seconds(exc))
+        except (genai_errors.ServerError, httpx.TransportError) as exc:
+            if transient_attempts >= _TRANSIENT_ERROR_MAX_RETRIES:
+                raise
+            delay = _TRANSIENT_ERROR_BACKOFF_SECONDS[min(transient_attempts, len(_TRANSIENT_ERROR_BACKOFF_SECONDS) - 1)]
+            transient_attempts += 1
+            time.sleep(delay)
 
 
 def _generate_json(

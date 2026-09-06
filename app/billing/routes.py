@@ -69,6 +69,7 @@ _HANDLED_EVENTS = {
     "subscription.completed",
     "subscription.cancelled",
     "subscription.paused",
+    "subscription.halted",
     "payment.failed",
 }
 
@@ -144,6 +145,17 @@ async def razorpay_webhook(request: Request):
         db.update_subscription_status(subscription_id, status="cancelled")
     elif event_type == "subscription.paused":
         db.update_subscription_status(subscription_id, status="paused")
+    elif event_type == "subscription.halted":
+        # Production-audit fix: Razorpay sends this once it has exhausted
+        # its own payment retries on a failing subscription -- previously
+        # unhandled entirely, so a customer whose card kept failing stayed
+        # status="active" (and therefore db.get_active_subscription() kept
+        # returning them, and app.entitlement kept granting unlimited
+        # meetings) forever. Any non-"active" status downgrades access the
+        # same way "cancelled"/"paused" already do -- get_active_subscription()
+        # only ever matches status == "active".
+        db.update_subscription_status(subscription_id, status="halted")
+        logger.warning("Razorpay webhook: subscription %s halted (payment retries exhausted), access downgraded", subscription_id)
     elif event_type == "payment.failed":
         logger.warning("Razorpay webhook: payment.failed for subscription %s", subscription_id)
 

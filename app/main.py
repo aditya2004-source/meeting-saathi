@@ -7,7 +7,7 @@ import traceback
 from pathlib import Path
 
 import markdown as markdown_lib
-from fastapi import FastAPI, File, Form, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -428,9 +428,18 @@ def admin_login_submit(
 ):
     if slug != settings.admin_url_slug or not settings.admin_url_slug:
         return _admin_not_found()
+    client_ip = request.client.host if request.client else ""
+    # Production-audit fix: _admin_login_rate_limited()/_record_admin_login_failure()
+    # were fully implemented above but never actually called anywhere --
+    # dead code, so there was no real lockout despite the timing-safe
+    # credential check. Checked before comparing credentials, so a blocked
+    # IP can't even use a correct-guess attempt to probe past the limit.
+    if _admin_login_rate_limited(client_ip):
+        return RedirectResponse(url=f"/{slug}/login?error=1", status_code=303)
     if _credentials_match(username, password):
         request.session["is_admin"] = True
         return RedirectResponse(url=f"/{slug}/dashboard", status_code=303)
+    _record_admin_login_failure(client_ip)
     return RedirectResponse(url=f"/{slug}/login?error=1", status_code=303)
 
 
@@ -826,7 +835,7 @@ async def debug_log(source: str = Form(...), event: str = Form(...), detail: str
 
 @app.post("/meetings/start")
 async def start_meeting(
-    request: Request,
+    customer: dict = Depends(auth.get_current_customer),
     title: str = Form(...),
     user_name: str = Form(""),
     client_name: str = Form(""),
@@ -843,28 +852,28 @@ async def start_meeting(
     different display name doesn't fragment one person's usage history in the
     admin panel.
 
-    `customer_id` is stamped from an Authorization: Bearer device token if
-    one is present (an already-paired extension, see app.auth_routes'
-    /account/connect/device-token) -- deliberately optional, not required,
-    so a caller that hasn't been through the pairing flow yet (there is no
-    pairing UI until Phase 4 ships) keeps working exactly as it does today,
-    just without the new per-customer protections that a real customer_id
-    unlocks on every other /meetings/{run_id}/... route (see
-    auth.authorize_run_access()). An identified customer additionally goes
-    through app.entitlement's free-trial/subscription check here (3 free
-    meetings, then an active subscription, else 402 trial_exhausted) --
-    an anonymous/unpaired caller skips this entirely, same transitional
-    reasoning as the ownership check.
+    Phase 0 production-audit fix: a real, resolved customer identity (session
+    cookie or a paired extension's bearer device token) is now REQUIRED to
+    start a meeting -- `Depends(auth.get_current_customer)` raises 401
+    before this body even runs otherwise. The previous "anonymous caller
+    skips entitlement entirely" branch was a genuine trial/payment bypass:
+    anyone could POST here directly with no login and no token and get
+    unlimited meetings fully processed for free, since a NULL customer_id
+    run was (and for pre-existing historical runs, still is -- see
+    auth.authorize_run_access()) treated as unguarded on every other
+    /meetings/{run_id}/... route too. Every NEW run from here on always has
+    a real customer_id and always goes through app.entitlement's free-trial/
+    subscription check (3 free meetings, then an active subscription, else
+    402 trial_exhausted).
     """
-    customer = auth.get_current_customer_optional(request)
-    billing_mode = entitlement.authorize_new_meeting(customer) if customer else ""
+    billing_mode = entitlement.authorize_new_meeting(customer)
     run = db.create_run(
         title=title.strip() or "Untitled Meeting",
         audio_path="",
         user_name=user_name.strip(),
         client_name=client_name.strip(),
         device_id=device_id.strip(),
-        customer_id=customer["id"] if customer else None,
+        customer_id=customer["id"],
         billing_mode=billing_mode,
     )
     working_dir_for(run["id"])

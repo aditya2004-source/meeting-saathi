@@ -216,12 +216,18 @@ def test_fair_use_hard_ceiling_blocks_further_meetings(tmp_path, monkeypatch):
     assert blocked.json()["detail"] == "fair_use_ceiling_reached"
 
 
-def test_meetings_start_without_identity_bypasses_entitlement_entirely(tmp_path, monkeypatch):
-    # Matches Phase 1's transitional rule: an anonymous/unpaired caller
-    # (today's founder extension, before Phase 4's pairing UI exists) is
-    # never subject to the entitlement engine at all.
+def test_meetings_start_without_identity_is_rejected_before_entitlement_even_runs(tmp_path, monkeypatch):
+    """Phase 0 production-audit fix: Phase 1's transitional "anonymous
+    caller skips entitlement entirely" rule was a genuine trial/payment
+    bypass -- anyone could POST here with no login and no token and get
+    unlimited meetings fully processed for free. A real, resolved customer
+    identity is now required before a new run can be created at all, so an
+    anonymous caller never reaches app.entitlement in the first place.
+    """
     _fresh_db(tmp_path, monkeypatch)
 
     for _ in range(10):  # well past the free allowance, no auth at all
         response = client.post("/meetings/start", data={"title": "Meeting"})
-        assert response.status_code == 200
+        assert response.status_code == 401
+
+    assert db.list_runs() == []

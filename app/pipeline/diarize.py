@@ -1,8 +1,10 @@
-from concurrent.futures import ThreadPoolExecutor
+import logging
+import time
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import Callable, TYPE_CHECKING, Optional, TypeVar
 
 import numpy as np
 import torch
@@ -10,6 +12,8 @@ import torch
 from app.config import settings
 from app.pipeline.timing import TimingRecorder, timed
 from app.pipeline.transcribe import TranscribedSegment, transcribe
+
+logger = logging.getLogger("meeting_saathi")
 
 if TYPE_CHECKING:
     # app.pipeline.speaker_names imports SpeakerSegment from this module, so
@@ -187,6 +191,63 @@ def _utterances_to_segments(utterances: list) -> list[SpeakerSegment]:
     return segments
 
 
+_T = TypeVar("_T")
+
+# Production-audit fix: neither AssemblyAI call below previously had any
+# timeout or retry -- a slow/hung request, or a transient network blip or
+# 5xx, silently dropped that one chunk's entire transcript (the existing
+# per-chunk try/except in orchestrator_streaming.py's
+# _process_chunk_then_maybe_finalize() swallows the exception and just
+# contributes no segments, by design, so this failed completely silently
+# rather than crashing anything). A ~50s chunk transcribes in well under a
+# minute in normal operation, so 90s is a generous per-attempt bound, not a
+# tight one; 2 retries with short backoff covers a transient blip without
+# materially delaying a live meeting's chunk pipeline.
+_ASSEMBLYAI_TIMEOUT_SECONDS = 90
+_ASSEMBLYAI_MAX_ATTEMPTS = 3
+_ASSEMBLYAI_BACKOFF_SECONDS = (3, 8)
+
+
+def _call_with_timeout_and_retry(run_once: Callable[[], _T], *, label: str) -> _T:
+    last_exc: Exception | None = None
+    for attempt in range(1, _ASSEMBLYAI_MAX_ATTEMPTS + 1):
+        # Deliberately NOT a `with ThreadPoolExecutor(...) as pool:` block --
+        # that shuts down on exit with wait=True by default, which would
+        # block right here for however long the hung call takes anyway,
+        # defeating the timeout entirely. shutdown(wait=False) lets this
+        # attempt give up on time; Python can't forcibly kill a thread, so a
+        # genuinely hung call's thread keeps running in the background and
+        # is simply abandoned -- an acceptable, bounded cost (one leaked
+        # thread per genuine hang) against the alternative of blocking the
+        # whole retry loop, and this whole call already runs inside
+        # orchestrator_streaming.py's own bounded _CHUNK_EXECUTOR, not on
+        # any request-serving thread.
+        pool = ThreadPoolExecutor(max_workers=1)
+        future = pool.submit(run_once)
+        try:
+            result = future.result(timeout=_ASSEMBLYAI_TIMEOUT_SECONDS)
+            pool.shutdown(wait=False)
+            return result
+        except FutureTimeoutError:
+            last_exc = TimeoutError(
+                f"{label} timed out after {_ASSEMBLYAI_TIMEOUT_SECONDS}s (attempt {attempt}/{_ASSEMBLYAI_MAX_ATTEMPTS})"
+            )
+            future.cancel()
+            pool.shutdown(wait=False)
+        except Exception as exc:  # noqa: BLE001 - retry any transient failure, re-raised if attempts exhaust
+            last_exc = exc
+            pool.shutdown(wait=False)
+        if attempt < _ASSEMBLYAI_MAX_ATTEMPTS:
+            delay = _ASSEMBLYAI_BACKOFF_SECONDS[min(attempt - 1, len(_ASSEMBLYAI_BACKOFF_SECONDS) - 1)]
+            logger.warning(
+                "%s failed on attempt %d/%d (%s) -- retrying in %ds",
+                label, attempt, _ASSEMBLYAI_MAX_ATTEMPTS, last_exc, delay,
+            )
+            time.sleep(delay)
+    logger.error("%s failed after %d attempts: %s", label, _ASSEMBLYAI_MAX_ATTEMPTS, last_exc)
+    raise last_exc  # noqa: RSE102 - always set by the loop above (max_attempts >= 1)
+
+
 def _assemblyai_transcribe_and_diarize(
     mixed_audio_path: Path,
     recorder: Optional[TimingRecorder] = None,
@@ -221,11 +282,14 @@ def _assemblyai_transcribe_and_diarize(
             raise RuntimeError(f"AssemblyAI transcription failed: {transcript.error}")
         return transcript
 
+    def _run_with_retry():
+        return _call_with_timeout_and_retry(_run, label="AssemblyAI transcribe+diarize")
+
     if recorder is None:
-        transcript = _run()
+        transcript = _run_with_retry()
     else:
         with timed(recorder, stage, repeated=repeated):
-            transcript = _run()
+            transcript = _run_with_retry()
 
     return _utterances_to_segments(transcript.utterances or [])
 
@@ -268,11 +332,14 @@ def _assemblyai_transcribe_only(
             raise RuntimeError(f"AssemblyAI transcription failed: {transcript.error}")
         return transcript
 
+    def _run_with_retry():
+        return _call_with_timeout_and_retry(_run, label="AssemblyAI transcribe")
+
     if recorder is None:
-        transcript = _run()
+        transcript = _run_with_retry()
     else:
         with timed(recorder, stage, repeated=repeated):
-            transcript = _run()
+            transcript = _run_with_retry()
 
     return [
         TranscribedSegment(start=utt.start / 1000.0, end=utt.end / 1000.0, text=(utt.text or "").strip())
