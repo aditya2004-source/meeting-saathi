@@ -37,16 +37,28 @@ async function getServerBaseUrl() {
 const FETCH_TIMEOUT_MS = 20000;
 
 // SaaS conversion Phase 1: an opaque bearer token minted server-side during
-// the (not-yet-built, see Phase 4) "Connect Account" pairing flow -- see
-// app/auth.py's issue_device_token()/app/auth_routes.py's
-// /account/connect/device-token. Empty until that pairing UI exists and a
-// person actually connects; every call below already works fine without
-// one (see app.auth.authorize_run_access()'s transitional rule server-side)
-// -- this is purely additive, attaching the header only when a token has
+// the "Connect Account" pairing flow -- see app/auth.py's
+// issue_device_token()/app/auth_routes.py's /account/connect/device-token.
+// Every call below already works fine without one (see
+// app.auth.authorize_run_access()'s transitional rule server-side) --
+// this is purely additive, attaching the header only when a token has
 // actually been stored.
+//
+// Defensive -- same chrome.storage.local flakiness as getServerBaseUrl()
+// above (confirmed in production 2026-09-06: this exact unguarded call
+// threw "Cannot read properties of undefined (reading 'local')" mid-
+// finalize, which took down the whole chunk/finalize upload and forced a
+// real customer meeting to auto-cancel). A failure to read the token must
+// never be a single point of failure -- falling back to "no token" is
+// always a safe, correct answer, same as the empty-string case already is.
 async function getDeviceToken() {
-  const { deviceToken } = await chrome.storage.local.get("deviceToken");
-  return deviceToken || "";
+  try {
+    const { deviceToken } = await chrome.storage.local.get("deviceToken");
+    return deviceToken || "";
+  } catch (err) {
+    console.error("Meeting Saathi: chrome.storage.local.get() failed, continuing without a device token.", err);
+    return "";
+  }
 }
 
 async function fetchWithTimeout(url, options, timeoutMs) {
@@ -86,9 +98,22 @@ function logDebug(event, detail) {
     .catch(() => {});
 }
 
+// Defensive -- same chrome.storage.local flakiness as getServerBaseUrl()/
+// getDeviceToken() above. Both this and getDeviceId() below sit directly
+// in startMeetingRun()'s Promise.all(), i.e. the very first thing that
+// happens on every "Start Recording" click -- left unguarded, either one
+// throwing would fail the whole meeting before a single second of audio
+// is captured. Falling back to an empty label is always a safe answer
+// (the run still starts; only the display name is missing for this one
+// meeting).
 async function getUserName() {
-  const { userName } = await chrome.storage.local.get("userName");
-  return userName || "";
+  try {
+    const { userName } = await chrome.storage.local.get("userName");
+    return userName || "";
+  } catch (err) {
+    console.error("Meeting Saathi: chrome.storage.local.get() failed, continuing without a saved name.", err);
+    return "";
+  }
 }
 
 // A stable identifier for this one extension install, generated once and kept
@@ -98,11 +123,25 @@ async function getUserName() {
 // popup.js's Setup section), which used to fragment their history in the
 // admin panel's usage table (app/db.py's usage_summary()) every time they did.
 // deviceId is the actual grouping key now; userName is just the label shown.
+//
+// Defensive, same reasoning as getUserName() above -- a failed .get() here
+// must not block the meeting from starting. Worst case (both .get() and
+// the .set() below fail) this mints a fresh id every call instead of a
+// stable one, which only degrades usage-history grouping for that one
+// meeting rather than blocking recording entirely.
 async function getDeviceId() {
-  const { deviceId } = await chrome.storage.local.get("deviceId");
-  if (deviceId) return deviceId;
+  try {
+    const { deviceId } = await chrome.storage.local.get("deviceId");
+    if (deviceId) return deviceId;
+  } catch (err) {
+    console.error("Meeting Saathi: chrome.storage.local.get() failed, minting a new device id for this run.", err);
+  }
   const newId = crypto.randomUUID();
-  await chrome.storage.local.set({ deviceId: newId });
+  try {
+    await chrome.storage.local.set({ deviceId: newId });
+  } catch (err) {
+    console.error("Meeting Saathi: chrome.storage.local.set() failed, continuing with an unsaved device id.", err);
+  }
   return newId;
 }
 

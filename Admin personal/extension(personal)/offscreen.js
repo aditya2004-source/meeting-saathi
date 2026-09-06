@@ -309,10 +309,24 @@ const UPLOAD_TIMEOUT_MS = 20000;
 
 // SaaS conversion Phase 1 -- see background.js's copy of this same helper
 // for the full rationale (an opaque bearer token minted during the
-// not-yet-built "Connect Account" pairing flow, purely additive).
+// "Connect Account" pairing flow, purely additive).
+//
+// Defensive -- same chrome.storage.local flakiness as getServerBaseUrl()
+// above. Confirmed in production 2026-09-06: this exact unguarded call
+// threw "Cannot read properties of undefined (reading 'local')" from
+// inside fetchWithTimeout() during a real meeting's finalize upload,
+// which failed the whole finalize and forced the meeting to auto-cancel.
+// A failure to read the token must never be a single point of failure for
+// the entire upload pipeline -- falling back to "no token" is always a
+// safe, correct answer, same as the empty-string case already is.
 async function getDeviceToken() {
-  const { deviceToken } = await chrome.storage.local.get("deviceToken");
-  return deviceToken || "";
+  try {
+    const { deviceToken } = await chrome.storage.local.get("deviceToken");
+    return deviceToken || "";
+  } catch (err) {
+    console.error("Meeting Saathi: chrome.storage.local.get() failed, continuing without a device token.", err);
+    return "";
+  }
 }
 
 async function fetchWithTimeout(url, options, timeoutMs) {
