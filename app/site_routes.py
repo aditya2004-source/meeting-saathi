@@ -4,15 +4,53 @@ Every prototype-simulated action here calls the real Phase 1 backend
 (app.auth_routes) instead of faking state client-side; see the plan's
 Phase 4 section for the full prototype-action -> real-backend mapping.
 """
+from pathlib import Path
+
 import markdown as markdown_lib
 from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from app import db
+from app.billing import plans as plans_module
+from app.docgen.render_pdf import extract_mermaid_blocks
 
 router = APIRouter()
 templates = Jinja2Templates(directory="app/web/templates")
+
+_SAMPLE_DOCS_DIR = Path(__file__).resolve().parent / "sample_documents"
+_SAMPLE_DOCS = [
+    ("mom", "MOM", _SAMPLE_DOCS_DIR / "mom_sample.md"),
+    ("meeting_analysis", "Meeting Analysis", _SAMPLE_DOCS_DIR / "meeting_analysis_sample.md"),
+    ("business_process_flow", "Business Process Flow", _SAMPLE_DOCS_DIR / "business_process_flow_sample.md"),
+]
+
+
+def _sample_document_previews() -> list[dict]:
+    """Landing page's tabbed showcase content -- pushed through the exact
+    same markdown+Mermaid rendering path the real document viewer uses
+    (app.docgen.render_pdf.extract_mermaid_blocks + the `markdown` library),
+    so what a visitor sees here is an honest preview of the real product's
+    rendering, not a decorative mockup that could drift from real output.
+    """
+    previews = []
+    for doc_key, label, path in _SAMPLE_DOCS:
+        raw = path.read_text(encoding="utf-8")
+        transformed, has_mermaid = extract_mermaid_blocks(raw)
+        body_html = markdown_lib.markdown(transformed, extensions=["tables", "fenced_code"])
+        previews.append({"key": doc_key, "label": label, "body_html": body_html, "has_mermaid": has_mermaid})
+    return previews
+
+
+def _pricing_context() -> dict:
+    """Real plan/pricing data from app.billing.plans -- the single source of
+    truth for what's charged. Used by both / and /pricing so neither page can
+    silently drift from the real billing configuration.
+    """
+    by_currency = {}
+    for plan in plans_module.all_plans():
+        by_currency.setdefault(plan.currency, {})[plan.billing_cycle] = plan
+    return {"plans_by_currency": by_currency, "currencies": list(plans_module.CURRENCIES)}
 
 # Every PUBLIC page, for sitemap.xml -- adding a new public page means
 # adding it here, so the sitemap can't silently drift from what's real.
@@ -65,6 +103,8 @@ def landing(request: Request):
             "Record your Google Meet call and get MOM, Meeting Analysis, and a "
             "Business Process Flow -- automatically, with AI.",
             "/",
+            document_previews=_sample_document_previews(),
+            **_pricing_context(),
         ),
     )
 
@@ -78,6 +118,7 @@ def pricing(request: Request):
             "Pricing -- Meeting Saathi",
             "3 free meetings, then simple monthly or yearly pricing for unlimited meetings.",
             "/pricing",
+            **_pricing_context(),
         ),
     )
 

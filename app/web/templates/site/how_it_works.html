@@ -1,15 +1,62 @@
 {% extends "site/base.html" %}
+{% from "site/_icons.html" import icon %}
 {% block content %}
-<div class="section">
-  <h1>How Meeting Saathi works</h1>
-  <p class="sub">From signup to your finished documents.</p>
-  <div class="steps">
-    <div class="step"><strong>1. Create your account</strong>Sign up with your name and email, accept the required policies, and verify your email with a one-time code.</div>
-    <div class="step"><strong>2. Install the extension</strong>Download, load it into Chrome, and connect it to your account -- no access code to type in.</div>
-    <div class="step"><strong>3. Record a Google Meet</strong>Click Start Recording once per meeting. No bot joins the call.</div>
-    <div class="step"><strong>4. Meeting ends</strong>Processing starts automatically -- transcription, then document generation.</div>
-    <div class="step"><strong>5. Get your documents</strong>MOM, Meeting Analysis, and Business Process Flow appear in your dashboard, ready to view or download.</div>
+<section class="section">
+  <div class="section-head reveal">
+    <span class="eyebrow">How it works</span>
+    <h1>From your first meeting to finished documents</h1>
+    <p>Five stages, start to finish. No bot joins your call, and nothing is generated you didn't ask for.</p>
   </div>
-  <div style="margin-top:24px"><a class="btn primary" href="/signup">Start Free</a></div>
-</div>
+
+  <div class="grid cols-2 reveal" style="align-items:stretch;">
+    <div class="card">
+      <div class="timeline-icon">{{ icon('account') }}</div>
+      <h3>1. Create your account</h3>
+      <p>Sign up with your name and email. Review and accept the Terms of Service, Privacy Policy, Refund Policy, and AI Disclaimer, then verify your email with a one-time code. Your 3 free meetings activate immediately -- no card required.</p>
+    </div>
+    <div class="card">
+      <div class="timeline-icon">{{ icon('puzzle') }}</div>
+      <h3>2. Install the extension</h3>
+      <p>Download the extension from the install page and load it into Chrome. Connect it to your account with one click -- there's no access code to copy or type in, and the connection is scoped to your account only.</p>
+    </div>
+    <div class="card">
+      <div class="timeline-icon">{{ icon('camera') }}</div>
+      <h3>3. Join your Google Meet call as usual</h3>
+      <p>Meeting Saathi doesn't add a separate participant to your call. It records from your own browser tab, so the meeting looks exactly the same to everyone on it.</p>
+    </div>
+    <div class="card">
+      <div class="timeline-icon">{{ icon('mic') }}</div>
+      <h3>4. Start recording with one click</h3>
+      <p>A visible recording indicator shows the call is being captured. You're responsible for letting other participants know and getting any consent required in your jurisdiction before recording.</p>
+    </div>
+  </div>
+
+  <div class="card reveal" style="margin-top:var(--ms-space-5);">
+    <div class="timeline-icon">{{ icon('gear') }}</div>
+    <h3>5. AI processing, then your documents</h3>
+    <p>Once the meeting ends, your recording is transcribed and analyzed automatically -- no manual step required. Meeting Saathi identifies speakers, decisions, action items, and any process discussed. Within a few minutes, three documents appear in your dashboard:</p>
+    <div class="grid cols-3" style="margin-top:var(--ms-space-4);">
+      <div class="card" style="box-shadow:none;">
+        <span class="tag">Document</span>
+        <h4 style="margin:8px 0 4px;">Minutes of Meeting</h4>
+        <p style="font-size:0.88rem;color:var(--ms-muted);">Attendees, discussion points, decisions, and action items.</p>
+      </div>
+      <div class="card" style="box-shadow:none;">
+        <span class="tag">Document</span>
+        <h4 style="margin:8px 0 4px;">Meeting Analysis</h4>
+        <p style="font-size:0.88rem;color:var(--ms-muted);">A deeper read on risks, open questions, and recommendations.</p>
+      </div>
+      <div class="card" style="box-shadow:none;">
+        <span class="tag">Document</span>
+        <h4 style="margin:8px 0 4px;">Business Process Flow</h4>
+        <p style="font-size:0.88rem;color:var(--ms-muted);">A real flowchart of any process walked through on the call.</p>
+      </div>
+    </div>
+    <p style="margin-top:var(--ms-space-4);">Every document can be reviewed in your browser or downloaded as a PDF. As with any AI-generated content, review it before relying on or sharing it -- see the <a href="/legal/ai-disclaimer">AI Disclaimer</a>.</p>
+  </div>
+
+  <div style="text-align:center;margin-top:var(--ms-space-7);" class="reveal">
+    <a class="btn primary lg" href="/signup">Start Free — 3 Meetings</a>
+  </div>
+</section>
 {% endblock %}

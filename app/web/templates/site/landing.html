@@ -1,4 +1,9 @@
 {% extends "site/base.html" %}
+{% from "site/_icons.html" import icon %}
+{% block extra_head %}
+<script src="/static/vendor/mermaid.min.js"></script>
+<script>window.addEventListener('DOMContentLoaded', () => { if (window.mermaid) mermaid.initialize({ startOnLoad: false, securityLevel: 'loose' }); });</script>
+{% endblock %}
 {% block structured_data %}
 <script type="application/ld+json">
 {
@@ -11,38 +16,335 @@
   "offers": {"@type": "Offer", "price": "0", "priceCurrency": "INR"}
 }
 </script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    {"@type": "Question", "name": "What does Meeting Saathi generate?", "acceptedAnswer": {"@type": "Answer", "text": "Three documents from your Google Meet call: a Minutes of Meeting, a Meeting Analysis, and a Business Process Flow diagram."}},
+    {"@type": "Question", "name": "Does Meeting Saathi add a bot to my call?", "acceptedAnswer": {"@type": "Answer", "text": "No -- the extension records from your own browser tab. No separate participant joins the call."}}
+  ]
+}
+</script>
 {% endblock %}
 {% block content %}
-<div class="hero">
-  <div class="eyebrow">AI Meeting Assistant for Google Meet</div>
-  <h1>Turn meetings into clear, useful business documents.</h1>
-  <p class="lead">Record your Google Meet and get exactly three outputs: Minutes of Meeting, Meeting Analysis, and Business Process Flow.</p>
-  <a class="btn primary" href="/signup">Start Free</a>
-  <a class="btn" href="/how-it-works">See How It Works</a>
-</div>
 
-<div class="section">
-  <h2>What you get</h2>
-  <p class="sub">Only the documents that matter.</p>
-  <div class="grid">
-    <div class="card"><h3>MOM</h3><p>Structured meeting summary, decisions, and action items.</p></div>
-    <div class="card"><h3>Meeting Analysis</h3><p>Key insights, risks, observations, and important discussion points.</p></div>
-    <div class="card"><h3>Business Process Flow</h3><p>A visual AS-IS flowchart based on the process explained during the meeting.</p></div>
+<!-- ===================== HERO ===================== -->
+<section class="hero">
+  <div>
+    <div class="eyebrow">AI Meeting Assistant for Google Meet</div>
+    <h1>Turn your Google Meet calls into finished documents, automatically.</h1>
+    <p class="lead">Google Meet → Meeting Saathi records and processes the call → your Minutes of Meeting, Meeting Analysis, and Business Process Flow are ready to review.</p>
+    <div class="hero-actions">
+      <a class="btn primary lg" href="/signup">Start Free — 3 Meetings</a>
+      <a class="btn lg" href="#action">See It In Action</a>
+    </div>
   </div>
-</div>
-
-<div class="section">
-  <h2>Simple pricing</h2>
-  <p class="sub">3 meetings free. Then upgrade for unlimited meetings, subject to fair use and a 3-hour maximum per meeting.</p>
-  <a class="btn primary" href="/pricing">See pricing</a>
-</div>
-
-<div class="section">
-  <div class="notice warning">
-    AI-generated documents may contain errors, omissions, or misinterpretations -- always
-    review before relying on them. You are responsible for informing meeting participants
-    and obtaining any consent required before recording. See our
-    <a href="/legal/ai-disclaimer">AI Disclaimer</a>.
+  <!-- Replaceable slot: built CSS/SVG/JS mockup, not a real recording. Swap
+       for a <video> here once a real capture exists -- see site.js's
+       "Hero animated mockup" block. -->
+  <div class="hero-mockup" aria-hidden="true">
+    <div class="mockup-chrome"><span></span><span></span><span></span></div>
+    <div class="mockup-stage">
+      <div class="mockup-frame active">
+        <div class="mockup-call-avatar">PS</div>
+        <div class="mockup-caption">Google Meet call in progress</div>
+      </div>
+      <div class="mockup-frame">
+        <div class="mockup-waveform"><span style="height:14px"></span><span style="height:26px"></span><span style="height:18px"></span><span style="height:32px"></span><span style="height:12px"></span></div>
+        <div class="mockup-caption">Recording…</div>
+      </div>
+      <div class="mockup-frame">
+        <div class="mockup-spinner"></div>
+        <div class="mockup-caption">Transcribing &amp; processing…</div>
+      </div>
+      <div class="mockup-frame">
+        <div class="mockup-docs">
+          <div class="mockup-doc-card">MOM</div>
+          <div class="mockup-doc-card">Meeting Analysis</div>
+          <div class="mockup-doc-card">Business Process Flow</div>
+        </div>
+        <div class="mockup-caption">Documents ready</div>
+      </div>
+    </div>
+    <div class="mockup-note">Illustrative preview — not a recording of a real call</div>
   </div>
+</section>
+
+<!-- ===================== SEE IT IN ACTION ===================== -->
+<section class="section section-alt" id="action">
+  <div class="section-head reveal">
+    <span class="eyebrow">Walkthrough</span>
+    <h2>See Meeting Saathi in action</h2>
+    <p>Click a step, or let it play automatically.</p>
+  </div>
+  <div class="walkthrough reveal">
+    <div class="walkthrough-steps">
+      <button class="walkthrough-step active"><span class="num">1</span> Meeting starts</button>
+      <button class="walkthrough-step"><span class="num">2</span> Recording</button>
+      <button class="walkthrough-step"><span class="num">3</span> AI processing</button>
+      <button class="walkthrough-step"><span class="num">4</span> Documents ready</button>
+    </div>
+    <div class="walkthrough-stage">
+      <div class="walkthrough-frame active">
+        <h4>You join your Google Meet call as usual</h4>
+        <p>No separate bot joins — Meeting Saathi runs from your own browser.</p>
+      </div>
+      <div class="walkthrough-frame">
+        <h4>One click starts recording</h4>
+        <p>A visible indicator shows recording is on, for consent and transparency.</p>
+      </div>
+      <div class="walkthrough-frame">
+        <h4>Your call is transcribed and understood</h4>
+        <p>Speakers, decisions, action items, and the process discussed are extracted.</p>
+      </div>
+      <div class="walkthrough-frame">
+        <h4>Three documents land in your dashboard</h4>
+        <p>Minutes of Meeting, Meeting Analysis, and a Business Process Flow — ready to review.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== THREE OUTPUTS ===================== -->
+<section class="section" id="outputs">
+  <div class="section-head reveal">
+    <span class="eyebrow">What you get</span>
+    <h2>Only the documents that matter</h2>
+    <p>Exactly three outputs, real rendering — not decoration.</p>
+  </div>
+  <div class="doc-tabs reveal" role="tablist">
+    {% for doc in document_previews %}
+    <button class="doc-tab{% if loop.first %} active{% endif %}" data-doc-key="{{ doc.key }}" role="tab" aria-selected="{{ 'true' if loop.first else 'false' }}">{{ doc.label }}</button>
+    {% endfor %}
+  </div>
+  <div class="doc-preview-frame reveal">
+    <div class="doc-preview-chrome"><span></span><span></span><span></span><span class="fname">sample-output.pdf</span></div>
+    {% for doc in document_previews %}
+    <div class="doc-preview-body{% if loop.first %} active{% endif %}" data-doc-key="{{ doc.key }}">{{ doc.body_html | safe }}</div>
+    {% endfor %}
+  </div>
+</section>
+
+<!-- ===================== BUSINESS PROCESS FLOW SPOTLIGHT ===================== -->
+<section class="section section-alt">
+  <div class="bpf-spotlight">
+    <div class="reveal">
+      <span class="eyebrow">A real differentiator</span>
+      <h2>Spoken process, turned into a real flowchart</h2>
+      <p style="color:var(--ms-muted);margin:12px 0 0;">When someone walks through a process on the call, Meeting Saathi doesn't just summarize it — it identifies each step, the decision points, and the branches, and produces an actual Business Process Flow diagram.</p>
+    </div>
+    <div class="bpf-anim reveal">
+      <div class="bpf-steps-text" aria-hidden="true">
+        <div>"So the request comes in, sales checks it…"</div>
+        <div>"…if it needs a discount above 15%, director approves…"</div>
+        <div>"…otherwise the manager signs off and we process it."</div>
+      </div>
+      <svg viewBox="0 0 400 260" width="100%" style="display:none" aria-hidden="true">
+        <path class="bpf-edge" d="M200 40 L200 60"/>
+        <path class="bpf-edge" d="M200 90 L200 110"/>
+        <path class="bpf-edge" d="M150 140 L90 170"/>
+        <path class="bpf-edge" d="M250 140 L310 170"/>
+        <path class="bpf-edge" d="M90 200 L170 220"/>
+        <path class="bpf-edge" d="M310 200 L230 220"/>
+        <rect class="bpf-node" x="160" y="10" width="80" height="30" rx="6"/>
+        <text class="bpf-label" x="200" y="29">Meeting Held</text>
+        <rect class="bpf-node" x="160" y="60" width="80" height="30" rx="6"/>
+        <text class="bpf-label" x="200" y="79">Steps Extracted</text>
+        <rect class="bpf-node" x="150" y="110" width="100" height="30" rx="6"/>
+        <text class="bpf-label" x="200" y="129">Discount &gt; 15%?</text>
+        <rect class="bpf-node" x="40" y="170" width="100" height="30" rx="6"/>
+        <text class="bpf-label" x="90" y="189">Director Approval</text>
+        <rect class="bpf-node" x="260" y="170" width="100" height="30" rx="6"/>
+        <text class="bpf-label" x="310" y="189">Manager Approval</text>
+        <rect class="bpf-node" x="150" y="220" width="100" height="30" rx="6"/>
+        <text class="bpf-label" x="200" y="239">Flow Complete</text>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== HOW IT WORKS (condensed) ===================== -->
+<section class="section">
+  <div class="section-head reveal">
+    <span class="eyebrow">How it works</span>
+    <h2>From your first meeting to finished documents</h2>
+  </div>
+  <div class="timeline reveal">
+    <div class="timeline-step">
+      <div class="timeline-icon">{{ icon('account') }}</div>
+      <h4>Create Account</h4>
+      <p>Sign up, verify your email.</p>
+    </div>
+    <div class="timeline-step">
+      <div class="timeline-icon">{{ icon('puzzle') }}</div>
+      <h4>Install Extension</h4>
+      <p>Load it, connect your account.</p>
+    </div>
+    <div class="timeline-step">
+      <div class="timeline-icon">{{ icon('camera') }}</div>
+      <h4>Join Google Meet</h4>
+      <p>Meet normally, no bot joins.</p>
+    </div>
+    <div class="timeline-step">
+      <div class="timeline-icon">{{ icon('mic') }}</div>
+      <h4>Start Recording</h4>
+      <p>One click, visible indicator.</p>
+    </div>
+    <div class="timeline-step">
+      <div class="timeline-icon">{{ icon('gear') }}</div>
+      <h4>AI Processing</h4>
+      <p>Transcribed and understood.</p>
+    </div>
+  </div>
+  <div style="text-align:center;margin-top:32px;" class="reveal">
+    <a class="btn" href="/how-it-works">See the full journey →</a>
+  </div>
+</section>
+
+<!-- ===================== BEFORE / AFTER ===================== -->
+<section class="section section-alt">
+  <div class="section-head reveal">
+    <span class="eyebrow">The real difference</span>
+    <h2>What changes once Meeting Saathi is running</h2>
+  </div>
+  <div class="compare reveal">
+    <div class="compare-col before">
+      <h3>Today, without it</h3>
+      <ul class="compare-list">
+        <li><span class="ico">{{ icon('x') }}</span> Manually taking notes during the call</li>
+        <li><span class="ico">{{ icon('x') }}</span> Re-listening to recordings to catch what you missed</li>
+        <li><span class="ico">{{ icon('x') }}</span> Manually writing up the Minutes of Meeting</li>
+        <li><span class="ico">{{ icon('x') }}</span> Manually analyzing risks and decisions after the fact</li>
+        <li><span class="ico">{{ icon('x') }}</span> Hand-drawing process diagrams from memory</li>
+        <li><span class="ico">{{ icon('x') }}</span> Important details get missed</li>
+      </ul>
+    </div>
+    <div class="compare-col after">
+      <h3>With Meeting Saathi</h3>
+      <ul class="compare-list">
+        <li><span class="ico">{{ icon('check') }}</span> Meeting captured automatically</li>
+        <li><span class="ico">{{ icon('check') }}</span> Transcript processed in the background</li>
+        <li><span class="ico">{{ icon('check') }}</span> Structured Minutes of Meeting, ready to review</li>
+        <li><span class="ico">{{ icon('check') }}</span> A detailed Meeting Analysis with risks and recommendations</li>
+        <li><span class="ico">{{ icon('check') }}</span> A real Business Process Flow diagram</li>
+        <li><span class="ico">{{ icon('check') }}</span> You review and use it — not build it from scratch</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== TRUST ===================== -->
+<section class="section">
+  <div class="section-head reveal">
+    <span class="eyebrow">Trust &amp; responsible AI</span>
+    <h2>Built with real limitations, stated plainly</h2>
+  </div>
+  <div class="trust-strip reveal">
+    <div class="trust-item">
+      <div class="ico">{{ icon('warning') }}</div>
+      <h4>Review before you rely on it</h4>
+      <p>AI-generated documents can contain errors or omissions — always review important content.</p>
+      <a href="/legal/ai-disclaimer">Read the AI Disclaimer →</a>
+    </div>
+    <div class="trust-item">
+      <div class="ico">{{ icon('mic') }}</div>
+      <h4>Consent is on you</h4>
+      <p>You're responsible for informing participants and getting any consent required before recording.</p>
+      <a href="/legal/terms-of-service">Read the Terms →</a>
+    </div>
+    <div class="trust-item">
+      <div class="ico">{{ icon('shield') }}</div>
+      <h4>Your data, your control</h4>
+      <p>Delete a meeting's data or your whole account any time from your account settings.</p>
+      <a href="/legal/privacy-policy">Read the Privacy Policy →</a>
+    </div>
+  </div>
+</section>
+
+<!-- ===================== PRICING ===================== -->
+<section class="section section-alt" id="pricing">
+  <div class="section-head reveal">
+    <span class="eyebrow">Pricing</span>
+    <h2>Simple, honest pricing</h2>
+    <p>3 meetings free. Then one plan, unlimited meetings, subject to fair use and a 3-hour maximum per meeting.</p>
+  </div>
+  <div class="pricing-currency reveal">
+    <div class="field" style="margin:0;">
+      <label for="pricing-currency">Currency</label>
+      <select id="pricing-currency">
+        {% for c in currencies %}<option value="{{ c }}" {% if c == 'INR' %}selected{% endif %}>{{ c }}</option>{% endfor %}
+      </select>
+    </div>
+  </div>
+  <div class="pricing-grid reveal">
+    <div class="card price-card">
+      <span class="tag">Free</span>
+      <div class="price-amount">Free</div>
+      <p>3 meetings, no card required</p>
+      <ul><li>{{ icon('check') }} MOM + Meeting Analysis + Business Process Flow</li><li>{{ icon('check') }} No credit card needed</li></ul>
+      <a class="btn block" href="/signup">Start Free</a>
+    </div>
+    {% for currency, cycles in plans_by_currency.items() %}
+    <div class="card price-card featured{% if currency == 'INR' %} active{% endif %}" data-plan-block="{{ currency }}">
+      <span class="tag">Monthly</span>
+      <div class="price-amount">{{ cycles.monthly.display_price }}<span class="cycle">/mo</span></div>
+      <p>Unlimited meetings*</p>
+      <ul><li>{{ icon('check') }} Unlimited meetings, fair use applies</li><li>{{ icon('check') }} Cancel anytime</li></ul>
+      <a class="btn primary block" href="/signup">Choose Monthly</a>
+    </div>
+    {% endfor %}
+    {% for currency, cycles in plans_by_currency.items() %}
+    <div class="card price-card{% if currency == 'INR' %} active{% endif %}" data-plan-block="{{ currency }}">
+      <span class="tag">Yearly</span>
+      <div class="price-amount">{{ cycles.yearly.display_price }}<span class="cycle">/yr</span></div>
+      <p>Unlimited meetings*</p>
+      <ul><li>{{ icon('check') }} 2 months free vs. monthly</li><li>{{ icon('check') }} Cancel anytime</li></ul>
+      <a class="btn block" href="/signup">Choose Yearly</a>
+    </div>
+    {% endfor %}
+  </div>
+  <p style="text-align:center;color:var(--ms-muted);font-size:0.85rem;margin-top:24px;" class="reveal">
+    *Maximum 3 hours per meeting; fair-use and abuse-prevention limits apply — see
+    <a href="/legal/terms-of-service">Terms</a>. Billed via Razorpay; non-refundable
+    except where required by law — see <a href="/legal/refund-policy">Refund Policy</a>.
+  </p>
+</section>
+
+<!-- ===================== FAQ ===================== -->
+<section class="section" id="faq">
+  <div class="section-head reveal">
+    <span class="eyebrow">FAQ</span>
+    <h2>Common questions</h2>
+  </div>
+  <div class="faq-list reveal">
+    {% set faqs = [
+      ("What does Meeting Saathi generate?", "Exactly three documents from your Google Meet call: a Minutes of Meeting, a Meeting Analysis, and a Business Process Flow diagram."),
+      ("Does it work with Google Meet?", "Yes — Google Meet is currently the only supported platform."),
+      ("Does Meeting Saathi add a bot to my call?", "No. The extension records from your own browser tab; no separate participant joins the call."),
+      ("How do the 3 free meetings work?", "Every account gets 3 successfully completed meetings free, no card required. A meeting that fails or never captures audio doesn't count against this."),
+      ("What happens after my free meetings?", "You'll need an active monthly or yearly subscription to keep recording — unlimited meetings while active, subject to fair use and a 3-hour maximum per meeting."),
+      ("How do I install the extension?", "Download it from the install page, load it into Chrome, and connect it to your account — no access code to type in."),
+      ("Can I cancel my subscription?", "Yes, any time from your account page. You keep access through the end of the period you already paid for."),
+      ("Can I delete my data?", "Yes — delete an individual meeting's data or your entire account from your account settings."),
+      ("Are AI-generated documents always accurate?", "No — they can contain errors or omissions. Always review important content before relying on or sharing it."),
+      ("What should I do before recording other people?", "Inform participants and obtain any consent required by law in your jurisdiction before recording — this is your responsibility."),
+      ("Where can I send feedback?", "Use the Feedback link in the footer or your dashboard any time."),
+    ] %}
+    {% for q, a in faqs %}
+    <div class="faq-item">
+      <button class="faq-question" aria-expanded="false">{{ q }} <span class="chev">{{ icon('chevron') }}</span></button>
+      <div class="faq-answer"><p>{{ a }}</p></div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
+<!-- ===================== FINAL CTA ===================== -->
+<div class="cta-band reveal">
+  <h2>Your next meeting can document itself.</h2>
+  <p>No card required for your first 3 meetings.</p>
+  <a class="btn lg" href="/signup">Start Free — 3 Meetings</a>
 </div>
+
 {% endblock %}

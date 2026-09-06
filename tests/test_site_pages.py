@@ -66,7 +66,7 @@ def test_unknown_legal_slug_404s():
 def test_logo_links_home_on_public_pages():
     for path in ["/", "/pricing"]:
         html = client.get(path).text
-        assert '<a class="brand" href="/">Meeting Saathi</a>' in html
+        assert '<a class="wordmark" href="/">' in html and "Meeting Saathi" in html
 
 
 def test_logo_links_home_on_the_dashboard(monkeypatch):

@@ -1,83 +1,94 @@
 {% extends "site/base.html" %}
+{% from "site/_icons.html" import icon %}
 {% block content %}
-<div class="section">
-  <h1>Choose your plan</h1>
-  <p class="sub">
-    <label>Currency
-      <select id="currency" onchange="renderPrices()" class="field" style="display:inline-block;width:auto;">
-        <option value="INR">India (INR)</option>
-        <option value="USD">International (USD)</option>
-        <option value="EUR">Europe (EUR)</option>
-        <option value="GBP">UK (GBP)</option>
+<section class="section">
+  <div class="section-head">
+    <span class="eyebrow">Pricing</span>
+    <h1>Simple, honest pricing</h1>
+    <p>3 meetings free, no card required. Then one plan, unlimited meetings, subject to fair use and a 3-hour maximum per meeting.</p>
+  </div>
+  <div class="pricing-currency">
+    <div class="field" style="margin:0;">
+      <label for="pricing-currency">Currency</label>
+      <select id="pricing-currency">
+        {% for c in currencies %}<option value="{{ c }}" {% if c == 'INR' %}selected{% endif %}>{{ c }}</option>{% endfor %}
       </select>
-    </label>
-  </p>
-  <div class="grid">
-    <div class="card">
-      <span class="tag">Free</span>
-      <div class="price">&#8377;0</div>
-      <p>3 meetings, no card required</p>
-      <p>MOM + Meeting Analysis + Business Process Flow</p>
-      <a class="btn primary" href="/signup">Start Free</a>
-    </div>
-    <div class="card">
-      <span class="tag">Monthly</span>
-      <div class="price" id="monthly-price">&#8377;299<span style="font-size:1rem;font-weight:400;">/mo</span></div>
-      <p>Unlimited meetings*</p>
-      <button class="btn primary" onclick="subscribe('monthly')">Choose Monthly</button>
-    </div>
-    <div class="card">
-      <span class="tag">Yearly</span>
-      <div class="price" id="yearly-price">&#8377;2,999<span style="font-size:1rem;font-weight:400;">/yr</span></div>
-      <p>Unlimited meetings*</p>
-      <button class="btn primary" onclick="subscribe('yearly')">Choose Yearly</button>
     </div>
   </div>
-  <div id="error" class="error-text" hidden></div>
-  <p style="color:var(--muted);font-size:0.85rem;margin-top:16px;">
-    *Maximum 3 hours per meeting. Fair-use and abuse-prevention policies apply -- see our
+  <div class="pricing-grid">
+    <div class="card price-card">
+      <span class="tag">Free</span>
+      <div class="price-amount">Free</div>
+      <p>3 meetings, no card required</p>
+      <ul><li>{{ icon('check') }} MOM + Meeting Analysis + Business Process Flow</li><li>{{ icon('check') }} No credit card needed</li></ul>
+      <a class="btn block" href="/signup">Start Free</a>
+    </div>
+    {% for currency, cycles in plans_by_currency.items() %}
+    <div class="card price-card featured{% if currency == 'INR' %} active{% endif %}" data-plan-block="{{ currency }}">
+      <span class="tag">Monthly</span>
+      <div class="price-amount">{{ cycles.monthly.display_price }}<span class="cycle">/mo</span></div>
+      <p>Unlimited meetings*</p>
+      <ul><li>{{ icon('check') }} Unlimited meetings, fair use applies</li><li>{{ icon('check') }} Cancel anytime</li></ul>
+      <button class="btn primary block" data-subscribe="monthly" data-currency="{{ currency }}">Choose Monthly</button>
+    </div>
+    {% endfor %}
+    {% for currency, cycles in plans_by_currency.items() %}
+    <div class="card price-card{% if currency == 'INR' %} active{% endif %}" data-plan-block="{{ currency }}">
+      <span class="tag">Yearly</span>
+      <div class="price-amount">{{ cycles.yearly.display_price }}<span class="cycle">/yr</span></div>
+      <p>Unlimited meetings*</p>
+      <ul><li>{{ icon('check') }} 2 months free vs. monthly</li><li>{{ icon('check') }} Cancel anytime</li></ul>
+      <button class="btn block" data-subscribe="yearly" data-currency="{{ currency }}">Choose Yearly</button>
+    </div>
+    {% endfor %}
+  </div>
+  <div id="pricing-error" class="error-text" hidden></div>
+  <p style="text-align:center;color:var(--ms-muted);font-size:0.85rem;margin-top:24px;">
+    *Maximum 3 hours per meeting; fair-use and abuse-prevention limits apply — see
     <a href="/legal/terms-of-service">Terms of Service</a>. Subscriptions are billed via
-    Razorpay and are non-refundable except where required by law -- see our
+    Razorpay and are non-refundable except where required by law — see our
     <a href="/legal/refund-policy">Refund Policy</a>.
   </p>
-</div>
+</section>
 <script>
-const DISPLAY_PRICES = {
-  INR: ['&#8377;299/mo', '&#8377;2,999/yr'],
-  USD: ['$4.99/mo', '$49.99/yr'],
-  EUR: ['&euro;4.49/mo', '&euro;44.99/yr'],
-  GBP: ['&pound;3.99/mo', '&pound;39.99/yr'],
-};
-
-function renderPrices() {
-  const currency = document.getElementById('currency').value;
-  const [monthly, yearly] = DISPLAY_PRICES[currency];
-  document.getElementById('monthly-price').innerHTML = monthly;
-  document.getElementById('yearly-price').innerHTML = yearly;
-}
-
-async function subscribe(billingCycle) {
-  const errorEl = document.getElementById('error');
-  errorEl.hidden = true;
-  const currency = document.getElementById('currency').value;
-
-  const me = await fetch('/account/me');
-  if (!me.ok) {
-    window.location.href = '/signup';
-    return;
+(function () {
+  const select = document.getElementById('pricing-currency');
+  function apply(currency) {
+    document.querySelectorAll('[data-plan-block]').forEach((block) => {
+      block.classList.toggle('active', block.dataset.planBlock === currency);
+    });
+  }
+  if (select) {
+    select.addEventListener('change', () => apply(select.value));
+    apply(select.value);
   }
 
-  const response = await fetch('/billing/subscribe', {
-    method: 'POST',
-    body: new URLSearchParams({billing_cycle: billingCycle, currency}),
+  document.querySelectorAll('[data-subscribe]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const errorEl = document.getElementById('pricing-error');
+      errorEl.hidden = true;
+      const billingCycle = btn.dataset.subscribe;
+      const currency = select ? select.value : 'INR';
+
+      const me = await fetch('/account/me');
+      if (!me.ok) {
+        window.location.href = '/signup';
+        return;
+      }
+
+      const response = await fetch('/billing/subscribe', {
+        method: 'POST',
+        body: new URLSearchParams({ billing_cycle: billingCycle, currency }),
+      });
+      if (!response.ok) {
+        errorEl.textContent = 'Could not start checkout -- please try again in a moment.';
+        errorEl.hidden = false;
+        return;
+      }
+      const { checkout_url } = await response.json();
+      window.location.href = checkout_url;
+    });
   });
-  if (!response.ok) {
-    errorEl.textContent = 'Could not start checkout -- please try again in a moment.';
-    errorEl.hidden = false;
-    return;
-  }
-  const {checkout_url} = await response.json();
-  window.location.href = checkout_url;
-}
+})();
 </script>
 {% endblock %}
