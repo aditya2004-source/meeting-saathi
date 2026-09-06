@@ -46,15 +46,17 @@ document.documentElement.classList.remove('no-js');
 })();
 
 // --- Hero animated mockup ------------------------------------------------
-// Replaceable slot: cycles through Call -> Recording -> Processing ->
-// Documents. Swap this whole block (and the .hero-mockup markup) for a
-// <video> once a real recording exists -- nothing else on the page depends
-// on it.
+// Replaceable slot: cycles through Meeting -> Transcript -> Processing ->
+// Documents, telling the full "meeting in, documents out" story once per
+// loop. Swap this whole block (and the .hero-mockup markup) for a <video>
+// once a real recording exists -- nothing else on the page depends on it.
 (function () {
   const frames = document.querySelectorAll('.hero-mockup .mockup-frame');
   if (!frames.length) return;
   const pill = document.querySelector('.hero-mockup .mockup-status-pill');
   const pillLabel = pill ? pill.querySelector('[data-role="status-label"]') : null;
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const revealTimers = [];
 
   function syncPill(frame) {
     if (!pill) return;
@@ -66,29 +68,59 @@ document.documentElement.classList.remove('no-js');
     if (pillLabel) pillLabel.textContent = frame.dataset.statusLabel || '';
   }
 
-  syncPill(frames[0]);
-
-  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    frames.forEach((f) => f.classList.remove('active'));
-    const last = frames[frames.length - 1];
-    last.classList.add('active');
-    syncPill(last);
-    return;
+  // Resets a frame's internal staggered reveals (transcript lines, the
+  // processing stepper, document cards, the ready banner) back to their
+  // hidden starting state, so the same frame's story replays in full the
+  // next time it becomes active rather than staying "already revealed".
+  function resetReveals(frame) {
+    frame.querySelectorAll('.transcript-line, .mockup-doc-card, .mockup-ready-banner').forEach((el) => el.classList.remove('show'));
+    frame.querySelectorAll('.mockup-step').forEach((el) => el.classList.remove('step-lit'));
   }
+
+  function playReveals(frame) {
+    if (reducedMotion) {
+      frame.querySelectorAll('.transcript-line, .mockup-doc-card, .mockup-ready-banner').forEach((el) => el.classList.add('show'));
+      frame.querySelectorAll('.mockup-step').forEach((el) => el.classList.add('step-lit'));
+      return;
+    }
+    frame.querySelectorAll('.transcript-line').forEach((el, idx) => {
+      revealTimers.push(setTimeout(() => el.classList.add('show'), idx * 750));
+    });
+    frame.querySelectorAll('.mockup-step').forEach((el, idx) => {
+      revealTimers.push(setTimeout(() => el.classList.add('step-lit'), idx * 700));
+    });
+    frame.querySelectorAll('.mockup-doc-card').forEach((el, idx) => {
+      revealTimers.push(setTimeout(() => el.classList.add('show'), idx * 150));
+    });
+    const banner = frame.querySelector('.mockup-ready-banner');
+    if (banner) revealTimers.push(setTimeout(() => banner.classList.add('show'), 550));
+  }
+
+  // Every frame starts reset; the initially-active one (server-rendered)
+  // plays its reveal immediately since there's no fade-in to wait for.
+  frames.forEach(resetReveals);
+  syncPill(frames[0]);
+  playReveals(frames[0]);
+
+  if (reducedMotion) return;
+
   let i = 0;
   setInterval(() => {
     // Fade the outgoing frame out fully before fading the next one in --
     // frames differ a lot in shape (a single spinner vs. three document
     // cards), so overlapping the two mid-transition read as clutter rather
     // than a clean crossfade. Matches the 260ms transition in site.css.
+    revealTimers.splice(0).forEach(clearTimeout);
     frames[i].classList.remove('active');
     i = (i + 1) % frames.length;
     const next = frames[i];
+    resetReveals(next);
     setTimeout(() => {
       next.classList.add('active');
       syncPill(next);
+      playReveals(next);
     }, 260);
-  }, 2600);
+  }, 3200);
 })();
 
 // --- "See it in action" walkthrough --------------------------------------

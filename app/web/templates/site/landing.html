@@ -43,35 +43,48 @@
   <!-- Replaceable slot: built CSS/SVG/JS mockup, not a real recording. Swap
        for a <video> here once a real capture exists -- see site.js's
        "Hero animated mockup" block. -->
+  <div class="hero-mockup-wrap">
   <div class="hero-mockup" aria-hidden="true">
     <div class="mockup-chrome">
       <div class="mockup-dots"><span></span><span></span><span></span></div>
-      <div class="mockup-meeting-title">Weekly Sync — Google Meet</div>
+      <div class="mockup-meeting-title">Product Discussion</div>
       <div class="mockup-status-pill">
-        <span class="dot"></span><span data-role="status-label">Live</span>
+        <span class="dot"></span><span data-role="status-label">Recording</span>
       </div>
     </div>
     <div class="mockup-stage">
-      <div class="mockup-frame active" data-status="live" data-status-label="Live">
+      <div class="mockup-frame active" data-status="recording" data-status-label="Recording">
         <div class="mockup-participants">
           <div class="mockup-avatar is-speaking">PS</div>
           <div class="mockup-avatar alt-1">RM</div>
           <div class="mockup-avatar alt-2">AK</div>
         </div>
+        <div class="mockup-rec-row">
+          <span class="mockup-rec-badge"><span class="dot"></span>REC</span>
+          <span class="mockup-timer">18:42</span>
+        </div>
+        <div class="mockup-waveform">
+          <span style="height:10px"></span><span style="height:24px"></span><span style="height:16px"></span>
+          <span style="height:30px"></span><span style="height:12px"></span><span style="height:26px"></span><span style="height:14px"></span>
+        </div>
         <div class="mockup-caption">Google Meet call in progress</div>
       </div>
       <div class="mockup-frame" data-status="recording" data-status-label="Recording">
-        <div class="mockup-waveform">
-          <span style="height:10px"></span><span style="height:24px"></span><span style="height:16px"></span>
-          <span style="height:32px"></span><span style="height:12px"></span><span style="height:28px"></span><span style="height:14px"></span>
+        <div class="mockup-transcript">
+          <div class="transcript-line"><span class="who">PS</span><span>"Customer currently receives the order through email…"</span></div>
+          <div class="transcript-line"><span class="who">RM</span><span>"Sales team verifies the details…"</span></div>
+          <div class="transcript-line"><span class="who">AK</span><span>"Manager approval is required above the threshold…"</span></div>
         </div>
-        <div class="mockup-timer">18:42</div>
-        <div class="mockup-caption">Recording your meeting</div>
+        <div class="mockup-caption" style="margin-top:6px;">Live transcript</div>
       </div>
       <div class="mockup-frame" data-status="processing" data-status-label="Processing">
         <div class="mockup-spinner"></div>
-        <div class="mockup-progress-track"><div class="mockup-progress-fill"></div></div>
-        <div class="mockup-caption">Transcribing &amp; analyzing meeting…</div>
+        <div class="mockup-caption strong">Analysing meeting…</div>
+        <div class="mockup-steps">
+          <div class="mockup-step"><span class="step-dot">1</span><span class="step-label">Transcribing</span></div>
+          <div class="mockup-step"><span class="step-dot">2</span><span class="step-label">Understanding</span></div>
+          <div class="mockup-step"><span class="step-dot">3</span><span class="step-label">Preparing docs</span></div>
+        </div>
       </div>
       <div class="mockup-frame" data-status="ready" data-status-label="Ready">
         <div class="mockup-docs">
@@ -83,18 +96,28 @@
           </div>
           <div class="mockup-doc-card doc-analysis">
             <div class="doc-card-head"><span class="doc-card-dot"></span>Analysis</div>
-            <div class="doc-card-tags"><span class="doc-tag risk">Risk</span><span class="doc-tag decision">Decision</span></div>
+            <div class="doc-card-tags"><span class="doc-tag insight">Insight</span><span class="doc-tag risk">Risk</span></div>
             <span class="doc-line w-90" style="margin-bottom:6px;"></span>
             <span class="doc-line w-55"></span>
           </div>
           <div class="mockup-doc-card doc-bpf">
             <div class="doc-card-head"><span class="doc-card-dot"></span>Process Flow</div>
-            <svg viewBox="0 0 100 46" class="doc-flow-mini">
-              <path d="M30 13H38"/><path d="M64 13H72"/><path d="M51 20V28"/>
-              <rect x="4" y="6" width="26" height="14" rx="3"/>
-              <rect x="38" y="6" width="26" height="14" rx="3"/>
-              <rect x="72" y="6" width="24" height="14" rx="3"/>
-              <rect x="20" y="28" width="26" height="14" rx="3"/>
+            <svg viewBox="0 12 132 54" class="doc-flow-mini">
+              <path d="M30,30 H40"/><path d="M68,30 H84"/>
+              <path d="M100,40 V48"/>
+              <path d="M100,40 L100,44 L58,44 L58,48"/>
+              <rect x="2" y="22" width="28" height="16" rx="3"/>
+              <rect x="40" y="22" width="28" height="16" rx="3"/>
+              <polygon points="84,30 100,20 116,30 100,40"/>
+              <rect x="84" y="48" width="28" height="14" rx="3"/>
+              <rect x="44" y="48" width="28" height="14" rx="3"/>
+              <text x="16" y="33" font-size="6.2" text-anchor="middle">Enquiry</text>
+              <text x="54" y="33" font-size="6.2" text-anchor="middle">Verify</text>
+              <text x="100" y="33" font-size="5.6" text-anchor="middle">OK?</text>
+              <text x="98" y="58" font-size="6.2" text-anchor="middle">Process</text>
+              <text x="58" y="58" font-size="6.2" text-anchor="middle">Review</text>
+              <text class="edge-label" x="106" y="46" font-size="5.4">Y</text>
+              <text class="edge-label" x="68" y="43" font-size="5.4">N</text>
             </svg>
           </div>
         </div>
@@ -102,6 +125,7 @@
       </div>
     </div>
     <div class="mockup-note">Illustrative preview — not a recording of a real call</div>
+  </div>
   </div>
 </section>
 
