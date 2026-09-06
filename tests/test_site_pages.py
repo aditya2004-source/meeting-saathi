@@ -23,6 +23,7 @@ _PUBLIC_PAGES = [
     "/legal/refund-policy",
     "/legal/ai-disclaimer",
     "/signup",
+    "/login",
     "/install",
     "/feedback",
 ]
@@ -101,6 +102,13 @@ def test_private_routes_carry_noindex_header():
 def test_public_routes_do_not_carry_noindex_header():
     for path in _PUBLIC_PAGES:
         assert "x-robots-tag" not in {k.lower() for k in client.get(path).headers.keys()}
+
+
+def test_welcome_requires_a_real_session_and_redirects_to_signup():
+    anon_client = TestClient(app, follow_redirects=False)
+    response = anon_client.get("/welcome")
+    assert response.status_code == 303
+    assert response.headers["location"] == "/signup"
 
 
 def test_feedback_submission_persists_a_real_row(tmp_path, monkeypatch):

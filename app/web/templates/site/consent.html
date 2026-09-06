@@ -1,9 +1,10 @@
 {% extends "site/base.html" %}
 {% block content %}
 <div class="panel">
+  {% include "site/_onboarding_progress.html" %}
   <div class="panel-card">
-    <h1 style="font-size:1.5rem;margin-top:0;">Review &amp; accept</h1>
-    <p style="color:var(--muted)">One last step before we send your verification code.</p>
+    <h1>Review &amp; accept</h1>
+    <p class="lead-sm">One last step before we send your verification code.</p>
     <div class="notice">
       <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
         <input id="consentCheck" type="checkbox" style="margin-top:4px" onchange="toggleButton()">
@@ -19,8 +20,8 @@
       </label>
     </div>
     <div id="error" class="error-text" hidden></div>
-    <button id="sendOtpBtn" class="btn primary" style="width:100%" onclick="acceptAndSendOtp()" disabled>Confirm &amp; Send Code</button>
-    <p style="font-size:0.8rem;color:var(--muted)">A verification code can only be sent after you accept the above.</p>
+    <button id="sendOtpBtn" class="btn primary block" onclick="acceptAndSendOtp()" disabled>Confirm &amp; Send Code</button>
+    <p style="font-size:0.8rem;color:var(--ms-muted);text-align:center;margin-top:var(--ms-space-3);">A verification code can only be sent after you accept the above.</p>
   </div>
 </div>
 <script>

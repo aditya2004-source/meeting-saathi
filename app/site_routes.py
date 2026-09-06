@@ -11,7 +11,7 @@ from fastapi import APIRouter, Form, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
-from app import db
+from app import auth, db
 from app.billing import plans as plans_module
 from app.docgen.render_pdf import extract_mermaid_blocks
 
@@ -67,6 +67,7 @@ _PUBLIC_PATHS = [
     "/signup/consent",
     "/signup/verify",
     "/install",
+    "/login",
 ]
 
 # The admin_url_slug path is deliberately NEVER added to this list or to
@@ -168,7 +169,7 @@ def legal_page(request: Request, slug: str):
 def signup_page(request: Request):
     return templates.TemplateResponse(
         "site/signup.html",
-        _ctx(request, "Create Your Account -- Meeting Saathi", "Start your 3 free meetings. No card required.", "/signup"),
+        _ctx(request, "Create Your Account -- Meeting Saathi", "Start your 3 free meetings. No card required.", "/signup", step="account"),
     )
 
 
@@ -184,6 +185,7 @@ def signup_consent_page(request: Request, email: str = "", name: str = ""):
             noindex=True,
             email=email,
             name=name,
+            step="consent",
         ),
     )
 
@@ -192,7 +194,47 @@ def signup_consent_page(request: Request, email: str = "", name: str = ""):
 def signup_verify_page(request: Request, email: str = ""):
     return templates.TemplateResponse(
         "site/verify.html",
-        _ctx(request, "Verify Your Email -- Meeting Saathi", "Enter the verification code we emailed you.", "/signup/verify", noindex=True, email=email),
+        _ctx(request, "Verify Your Email -- Meeting Saathi", "Enter the verification code we emailed you.", "/signup/verify", noindex=True, email=email, step="verify"),
+    )
+
+
+@router.get("/welcome", response_class=HTMLResponse)
+def welcome_page(request: Request):
+    """Sits between OTP verification and the install flow -- a real session
+    is required (Phase 1's OTP login stamps request.session["customer_id"]
+    on verify), matching /account's pattern rather than /dashboard's
+    anonymous ?name= fallback, since there's no legacy caller of this new
+    route to stay backward-compatible with.
+    """
+    customer = auth.get_current_customer_optional(request)
+    if customer is None:
+        return RedirectResponse(url="/signup", status_code=303)
+    return templates.TemplateResponse(
+        "site/welcome.html",
+        _ctx(
+            request,
+            "Welcome -- Meeting Saathi",
+            "Your account is ready. Install the extension to record your first meeting.",
+            "/welcome",
+            noindex=True,
+            customer=customer,
+            step="install",
+        ),
+    )
+
+
+@router.get("/login", response_class=HTMLResponse)
+def login_page(request: Request):
+    """Lightweight returning-customer entry point: email -> OTP -> verify,
+    reusing the same /auth/send-otp + /auth/verify-otp backend as signup.
+    No name/consent step -- app.auth_routes.send_otp already skips the
+    consent requirement for an already-verified email, so this page simply
+    can't move a never-verified email past sending an OTP (that still
+    requires a real signup + consent).
+    """
+    return templates.TemplateResponse(
+        "site/login.html",
+        _ctx(request, "Log In -- Meeting Saathi", "Log in to your Meeting Saathi account.", "/login"),
     )
 
 
@@ -205,6 +247,7 @@ def install_page(request: Request):
             "Install the Extension -- Meeting Saathi",
             "A guided, step-by-step install for the Meeting Saathi Chrome extension.",
             "/install",
+            step="install",
         ),
     )
 

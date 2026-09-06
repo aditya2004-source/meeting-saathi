@@ -333,6 +333,32 @@ body.site {
 .site .progress-step.current .progress-label, .site .progress-step.done .progress-label { color: var(--ms-ink); }
 
 /* ==========================================================================
+   Install / download experience
+   ========================================================================== */
+.site .install-hero { max-width: 720px; margin: 0 auto var(--ms-space-7); text-align: center; }
+.site .install-download { display: flex; align-items: center; justify-content: center; gap: var(--ms-space-3); flex-wrap: wrap; margin-top: var(--ms-space-4); }
+.site .install-steps { max-width: 720px; margin: 0 auto; display: flex; flex-direction: column; gap: var(--ms-space-4); }
+.site .install-step { display: flex; gap: var(--ms-space-4); background: var(--ms-surface); border: 1px solid var(--ms-border-soft); border-radius: var(--ms-radius-md); padding: var(--ms-space-4) var(--ms-space-5); box-shadow: var(--ms-shadow-sm); }
+.site .install-num { flex: none; width: 34px; height: 34px; border-radius: 50%; background: var(--ms-gradient); color: #fff; font-weight: 700; font-size: 0.92rem; display: flex; align-items: center; justify-content: center; }
+.site .install-step h3 { margin: 2px 0 4px; font-size: 1rem; }
+.site .install-step p { margin: 0; color: var(--ms-muted); font-size: 0.9rem; }
+.site .install-step code { background: var(--ms-bg-alt); padding: 2px 6px; border-radius: 4px; font-size: 0.85em; }
+.site .install-body { flex: 1; min-width: 0; }
+
+/* Illustrated (not real) Chrome-toolbar graphic for the "pin it" step --
+   a replaceable slot: swap for a real screenshot later, see install.html's
+   inline comment at this markup. */
+.site .chrome-mock { margin-top: var(--ms-space-3); border: 1px solid var(--ms-border-soft); border-radius: var(--ms-radius-sm); background: var(--ms-bg-alt); padding: 10px 14px; display: flex; align-items: center; gap: 10px; }
+.site .chrome-mock .dots span { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: var(--ms-border); margin-right: 4px; }
+.site .chrome-mock .bar { flex: 1; height: 20px; border-radius: var(--ms-radius-pill); background: var(--ms-surface); border: 1px solid var(--ms-border-soft); }
+.site .chrome-mock .puzzle-icon { position: relative; width: 26px; height: 26px; border-radius: 6px; display: flex; align-items: center; justify-content: center; color: var(--ms-ink-soft); }
+.site .chrome-mock .puzzle-icon.highlight { box-shadow: 0 0 0 3px var(--ms-accent-ring); color: var(--ms-accent-1); }
+.site .install-connect { display: flex; align-items: center; gap: var(--ms-space-3); flex-wrap: wrap; margin-top: var(--ms-space-3); }
+.site #connect-status { font-size: 0.86rem; color: var(--ms-muted); }
+.site #connect-status.ok { color: #0B6B3D; font-weight: 600; }
+.site #connect-status.err { color: var(--ms-danger); font-weight: 600; }
+
+/* ==========================================================================
    Legal articles
    ========================================================================== */
 .site article.legal { max-width: 720px; margin: 0 auto; padding: var(--ms-space-8) var(--ms-space-6); line-height: 1.75; }

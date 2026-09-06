@@ -1,0 +1,15 @@
+{# Shared onboarding progress indicator -- included by signup, consent, verify,
+   welcome, and install templates. Pass `step` as one of: account, consent,
+   verify, install, ready. #}
+{% set _steps = [('account', 'Account'), ('consent', 'Consent'), ('verify', 'Verify'), ('install', 'Install'), ('ready', 'Ready')] %}
+{% set _order = ['account', 'consent', 'verify', 'install', 'ready'] %}
+{% set _current_index = _order.index(step) %}
+<div class="progress-steps">
+  {% for key, label in _steps %}
+  {% set _idx = _order.index(key) %}
+  <div class="progress-step{% if _idx < _current_index %} done{% elif _idx == _current_index %} current{% endif %}">
+    <div class="progress-dot">{% if _idx < _current_index %}✓{% else %}{{ _idx + 1 }}{% endif %}</div>
+    <div class="progress-label">{{ label }}</div>
+  </div>
+  {% endfor %}
+</div>

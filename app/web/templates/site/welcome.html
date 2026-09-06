@@ -1,0 +1,17 @@
+{% extends "site/base.html" %}
+{% block content %}
+<div class="panel">
+  {% include "site/_onboarding_progress.html" %}
+  <div class="panel-card" style="text-align:center;">
+    <div style="width:56px;height:56px;border-radius:50%;background:var(--ms-gradient);display:flex;align-items:center;justify-content:center;margin:0 auto var(--ms-space-4);color:#fff;font-size:1.5rem;">✓</div>
+    <h1>Welcome, {{ customer.name or customer.email }}</h1>
+    <p class="lead-sm">Your account is ready, and 3 free meetings are activated -- no card required.</p>
+    <div class="notice" style="text-align:left;">
+      One more step: install the Meeting Saathi Chrome extension and connect it
+      to this account, so your next Google Meet call can be recorded and
+      turned into documents automatically.
+    </div>
+    <a class="btn primary block" href="/install">Install the Extension</a>
+  </div>
+</div>
+{% endblock %}

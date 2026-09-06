@@ -1,9 +1,10 @@
 {% extends "site/base.html" %}
 {% block content %}
 <div class="panel">
+  {% include "site/_onboarding_progress.html" %}
   <div class="panel-card">
-    <h1 style="font-size:1.5rem;margin-top:0;">Create your account</h1>
-    <p style="color:var(--muted)">Start with 3 free meetings. No card required.</p>
+    <h1>Create your account</h1>
+    <p class="lead-sm">Start with 3 free meetings. No card required.</p>
     <div class="field">
       <label for="name">Name</label>
       <input id="name" placeholder="Your name">
@@ -13,7 +14,8 @@
       <input id="email" type="email" placeholder="you@example.com">
     </div>
     <div id="error" class="error-text" hidden></div>
-    <button class="btn primary" style="width:100%" onclick="continueSignup()">Continue</button>
+    <button class="btn primary block" onclick="continueSignup()">Continue</button>
+    <p style="font-size:0.82rem;color:var(--ms-muted);text-align:center;margin:var(--ms-space-4) 0 0;">Already have an account? <a href="/login">Log in</a></p>
   </div>
 </div>
 <script>
