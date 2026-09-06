@@ -268,6 +268,24 @@ def init_db(db_path: Optional[Path] = None) -> None:
                 conn.execute(column_sql)
             except sqlite3.OperationalError:
                 pass  # column already exists -- this DB was already migrated (or is fresh)
+        for column_sql in (
+            # Phase 6/10: a cancel request must NOT flip `status` away from
+            # "active" -- get_active_subscription() (and thus every
+            # entitlement check) keys on status == "active", and Razorpay's
+            # cancel-at-cycle-end means the customer keeps access right up
+            # until the real period end. This flag is purely informational
+            # (lets the account page show "cancelling" instead of looking
+            # unchanged) until the real subscription.cancelled webhook
+            # eventually flips `status` itself. Caught live by Phase 10's
+            # end-to-end journey test -- an earlier version of this feature
+            # set status="cancelling" directly, which cut off access
+            # immediately instead of at period end.
+            "ALTER TABLE subscriptions ADD COLUMN cancel_at_period_end INTEGER NOT NULL DEFAULT 0",
+        ):
+            try:
+                conn.execute(column_sql)
+            except sqlite3.OperationalError:
+                pass  # column already exists -- this DB was already migrated (or is fresh)
         # No index existed on this table at all before Phase 1 -- every query
         # was a full scan. customer_id-scoped lookups (every ownership check
         # from here on) and admin/analytics queries filtering by state or
@@ -798,7 +816,11 @@ def get_subscription_by_razorpay_id(razorpay_subscription_id: str) -> Optional[d
 
 
 def update_subscription_status(razorpay_subscription_id: str, status: str, current_period_end: Optional[str] = None) -> None:
-    fields = {"status": status, "updated_at": _now()}
+    # A fresh activation/renewal supersedes any earlier cancel request --
+    # e.g. a customer who cancelled, then resubscribed before the old
+    # period even ended, shouldn't have a stale cancel_at_period_end flag
+    # lingering on the row status.activated/charged now sets.
+    fields = {"status": status, "updated_at": _now(), "cancel_at_period_end": 0}
     if current_period_end is not None:
         fields["current_period_end"] = current_period_end
     set_clause = ", ".join(f"{key} = ?" for key in fields)
@@ -806,6 +828,21 @@ def update_subscription_status(razorpay_subscription_id: str, status: str, curre
         conn.execute(
             f"UPDATE subscriptions SET {set_clause} WHERE razorpay_subscription_id = ?",
             (*fields.values(), razorpay_subscription_id),
+        )
+
+
+def mark_subscription_cancel_at_period_end(razorpay_subscription_id: str) -> None:
+    """Records that a cancellation was requested, WITHOUT touching `status`
+    -- get_active_subscription() (and thus every entitlement check) keys on
+    status == "active", and the whole point of cancel-at-cycle-end is that
+    the customer keeps access right up until the real period end. `status`
+    only actually changes once Razorpay's own subscription.cancelled
+    webhook fires (see update_subscription_status above).
+    """
+    with _connect() as conn:
+        conn.execute(
+            "UPDATE subscriptions SET cancel_at_period_end = 1, updated_at = ? WHERE razorpay_subscription_id = ?",
+            (_now(), razorpay_subscription_id),
         )
 
 

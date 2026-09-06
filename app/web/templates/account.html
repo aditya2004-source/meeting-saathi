@@ -18,9 +18,13 @@
 
   <h2>Subscription</h2>
   {% if subscription %}
-    <p><strong>Status:</strong> {{ subscription.status | capitalize }}
-      {% if subscription.current_period_end %}(renews/ends {{ subscription.current_period_end[:10] }}){% endif %}</p>
-    {% if subscription.status == 'active' %}
+    {% if subscription.cancel_at_period_end %}
+      <p><strong>Status:</strong> Cancelling
+        {% if subscription.current_period_end %}(access ends {{ subscription.current_period_end[:10] }}){% endif %}</p>
+      <p class="muted" style="font-size:0.85rem;">You'll keep access until then -- no further charge after that.</p>
+    {% else %}
+      <p><strong>Status:</strong> {{ subscription.status | capitalize }}
+        {% if subscription.current_period_end %}(renews {{ subscription.current_period_end[:10] }}){% endif %}</p>
       <button type="button" onclick="cancelSubscription()">Cancel Subscription</button>
       <p class="muted" style="font-size:0.85rem;">You'll keep access through the end of the period you already paid for.</p>
     {% endif %}

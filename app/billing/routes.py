@@ -48,11 +48,15 @@ def cancel(customer: dict = Depends(auth.get_current_customer)):
     if subscription is None or not subscription.get("razorpay_subscription_id"):
         raise HTTPException(status_code=404, detail="no_active_subscription")
     razorpay_client.cancel_subscription(subscription["razorpay_subscription_id"])
-    # The webhook (subscription.cancelled, once Razorpay actually processes
-    # the cancel-at-cycle-end) is the real source of truth for `status`;
-    # this local update is just so the dashboard reflects "cancelling" right
-    # away instead of looking unchanged until that webhook arrives.
-    db.update_subscription_status(subscription["razorpay_subscription_id"], status="cancelling")
+    # Does NOT change `status` -- get_active_subscription() keys on
+    # status == "active", and cancel-at-cycle-end means the customer keeps
+    # access right up until the real period end. This flag is purely
+    # informational (account.html shows "cancelling" instead of looking
+    # unchanged) until Razorpay's own subscription.cancelled webhook
+    # eventually flips `status` itself. An earlier version of this set
+    # status="cancelling" directly here, which cut off access immediately
+    # instead of at period end -- caught by Phase 10's end-to-end test.
+    db.mark_subscription_cancel_at_period_end(subscription["razorpay_subscription_id"])
     return JSONResponse({"ok": True})
 
 

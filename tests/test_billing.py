@@ -226,7 +226,7 @@ def test_cancel_requires_an_active_subscription(tmp_path, monkeypatch):
     assert response.status_code == 404
 
 
-def test_cancel_calls_razorpay_and_marks_cancelling(tmp_path, monkeypatch):
+def test_cancel_calls_razorpay_and_marks_cancel_pending_without_revoking_access(tmp_path, monkeypatch):
     _fresh_db(tmp_path, monkeypatch)
     customer = _verified_customer("priya@example.com")
     db.create_pending_subscription(customer["id"], "monthly", "INR", "sub_test123")
@@ -238,4 +238,9 @@ def test_cancel_calls_razorpay_and_marks_cancelling(tmp_path, monkeypatch):
 
     assert response.status_code == 200
     mock_cancel.assert_called_once_with("sub_test123")
-    assert db.get_subscription_by_razorpay_id("sub_test123")["status"] == "cancelling"
+    subscription = db.get_subscription_by_razorpay_id("sub_test123")
+    # status stays "active" -- cancel-at-cycle-end means the customer keeps
+    # access until the real period end, not the moment they click cancel.
+    assert subscription["status"] == "active"
+    assert subscription["cancel_at_period_end"] == 1
+    assert db.get_active_subscription(customer["id"]) is not None

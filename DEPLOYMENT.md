@@ -30,9 +30,12 @@ document is what to actually do, in order, to go live.
 
 Copy `.env.example` to `.env` on the VPS (never commit `.env`) and fill in:
 
-- `GEMINI_API_KEY` -- already have one; **enable paid billing** before real
-  volume (the free tier's 20/day + 250k-tokens/minute caps will be hit fast,
-  confirmed live in Phase 3's spike test).
+- `GEMINI_API_KEY` -- **the app will not start at all without this set** (confirmed
+  via a real container boot test: `app/docgen/engine.py` constructs its Gemini
+  client at import time, so a missing key crashes every route, not just document
+  generation) -- already have one; **enable paid billing** before real volume
+  (the free tier's 20/day + 250k-tokens/minute caps will be hit fast, confirmed
+  live in Phase 3's spike test).
 - `ASSEMBLYAI_API_KEY` + `TRANSCRIPTION_PROVIDER=assemblyai` -- required for the
   VPS sizing above to hold; get a key at assemblyai.com.
 - `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` -- from Razorpay Dashboard > Settings
