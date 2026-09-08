@@ -13,6 +13,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 
 from app import auth, db
 from app.billing import plans, razorpay_client
+from app.config import settings
 
 logger = logging.getLogger("meeting_saathi")
 
@@ -69,10 +70,46 @@ def subscribe(
             currency=plan.currency,
             razorpay_subscription_id=subscription_payload["id"],
         )
-        return JSONResponse({"checkout_url": subscription_payload["short_url"]})
+        return JSONResponse(
+            {
+                "checkout_url": subscription_payload["short_url"],
+                "subscription_id": subscription_payload["id"],
+                # The Key ID (not the secret) is meant to be public --
+                # Razorpay's own Standard Checkout requires it client-side to
+                # open the payment modal. Never confuse this with
+                # RAZORPAY_KEY_SECRET, which never leaves the server.
+                "razorpay_key_id": settings.razorpay_key_id,
+            }
+        )
     finally:
         with _subscribe_in_progress_lock:
             _subscribe_in_progress.discard(customer["id"])
+
+
+@router.post("/verify-subscription-auth")
+def verify_subscription_auth(
+    razorpay_payment_id: str = Form(...),
+    razorpay_signature: str = Form(...),
+    customer: dict = Depends(auth.get_current_customer),
+):
+    """Confirms a Standard Checkout subscription-authorization callback is
+    genuine, for accurate immediate UI feedback only -- this never marks a
+    subscription active itself. That stays exclusively the job of the
+    verified Razorpay webhook (subscription.activated, see below), so there
+    is no risk of the browser being trusted to grant its own entitlement.
+    """
+    pending = db.get_latest_pending_subscription(customer["id"])
+    if pending is None:
+        raise HTTPException(status_code=404, detail="no_pending_subscription")
+
+    valid = razorpay_client.verify_payment_signature(
+        payment_id=razorpay_payment_id,
+        subscription_id=pending["razorpay_subscription_id"],
+        signature=razorpay_signature,
+    )
+    if not valid:
+        raise HTTPException(status_code=400, detail="signature_verification_failed")
+    return JSONResponse({"ok": True})
 
 
 @router.post("/cancel")

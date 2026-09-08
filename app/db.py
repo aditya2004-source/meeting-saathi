@@ -801,6 +801,23 @@ def create_pending_subscription(customer_id: str, plan: str, currency: str, razo
     return get_subscription(subscription_id)
 
 
+def get_latest_pending_subscription(customer_id: str) -> Optional[dict[str, Any]]:
+    """The customer's most recent not-yet-activated subscription (status
+    "created") -- used only to look up the authoritative razorpay_subscription_id
+    for verifying a Standard Checkout authorization callback server-side.
+    Never used to grant entitlement (see get_active_subscription above,
+    which requires status == "active").
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            """SELECT * FROM subscriptions
+               WHERE customer_id = ? AND status = 'created'
+               ORDER BY created_at DESC LIMIT 1""",
+            (customer_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def get_subscription(subscription_id: str) -> Optional[dict[str, Any]]:
     with _connect() as conn:
         row = conn.execute("SELECT * FROM subscriptions WHERE id = ?", (subscription_id,)).fetchone()

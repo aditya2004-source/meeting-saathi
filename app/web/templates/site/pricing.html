@@ -50,6 +50,7 @@
     <a href="/legal/refund-policy">Refund Policy</a>.
   </p>
 </section>
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script>
 (function () {
   const select = document.getElementById('pricing-currency');
@@ -64,45 +65,84 @@
   }
 
   const subscribeButtons = document.querySelectorAll('[data-subscribe]');
+  const errorEl = document.getElementById('pricing-error');
   // Guards against a rapid double-click (or clicking a second plan while
-  // the first click's request is still in flight) firing two subscribe
-  // requests -- disable every subscribe button for the duration of one
-  // request, re-enabling only on failure (success navigates away anyway).
+  // a request is in flight) firing two subscribe requests. Unlike a plain
+  // redirect, opening the Razorpay Checkout modal does NOT navigate away
+  // from this page, so this stays held for the modal's entire lifetime --
+  // only released on an early failure or once the modal itself closes
+  // (paid or dismissed) -- never reset right after /billing/subscribe
+  // returns, or a second click could fire while the modal is still open.
   let subscribing = false;
+
+  function releaseGuard() {
+    subscribing = false;
+    subscribeButtons.forEach((b) => (b.disabled = false));
+  }
+
+  function showError(message) {
+    errorEl.textContent = message;
+    errorEl.hidden = false;
+  }
 
   subscribeButtons.forEach((btn) => {
     btn.addEventListener('click', async () => {
       if (subscribing) return;
       subscribing = true;
       subscribeButtons.forEach((b) => (b.disabled = true));
-
-      const errorEl = document.getElementById('pricing-error');
       errorEl.hidden = true;
+
       const billingCycle = btn.dataset.subscribe;
       const currency = select ? select.value : 'INR';
 
-      try {
-        const me = await fetch('/account/me');
-        if (!me.ok) {
-          window.location.href = '/signup';
-          return;
-        }
-
-        const response = await fetch('/billing/subscribe', {
-          method: 'POST',
-          body: new URLSearchParams({ billing_cycle: billingCycle, currency }),
-        });
-        if (!response.ok) {
-          errorEl.textContent = 'Could not start checkout -- please try again in a moment.';
-          errorEl.hidden = false;
-          return;
-        }
-        const { checkout_url } = await response.json();
-        window.location.href = checkout_url;
-      } finally {
-        subscribing = false;
-        subscribeButtons.forEach((b) => (b.disabled = false));
+      const me = await fetch('/account/me');
+      if (!me.ok) {
+        window.location.href = '/signup';
+        return;
       }
+      const customer = await me.json();
+
+      const response = await fetch('/billing/subscribe', {
+        method: 'POST',
+        body: new URLSearchParams({ billing_cycle: billingCycle, currency }),
+      });
+      if (!response.ok) {
+        showError('Could not start checkout -- please try again in a moment.');
+        releaseGuard();
+        return;
+      }
+      const { subscription_id, razorpay_key_id } = await response.json();
+
+      const rzp = new Razorpay({
+        key: razorpay_key_id,
+        subscription_id: subscription_id,
+        name: 'Meeting Saathi',
+        description: billingCycle === 'monthly' ? 'Monthly subscription' : 'Yearly subscription',
+        prefill: { name: customer.name, email: customer.email },
+        theme: { color: '#5b4bff' },
+        handler: async function (rzpResponse) {
+          const verifyResponse = await fetch('/billing/verify-subscription-auth', {
+            method: 'POST',
+            body: new URLSearchParams({
+              razorpay_payment_id: rzpResponse.razorpay_payment_id,
+              razorpay_signature: rzpResponse.razorpay_signature,
+            }),
+          });
+          releaseGuard();
+          if (!verifyResponse.ok) {
+            showError('Payment could not be verified -- please contact support before retrying.');
+            return;
+          }
+          window.location.href = '/account';
+        },
+        modal: {
+          ondismiss: function () {
+            // Customer closed the checkout popup without paying.
+            releaseGuard();
+          },
+        },
+      });
+      rzp.open();
     });
   });
 })();

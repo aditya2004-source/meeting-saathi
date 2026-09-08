@@ -97,3 +97,22 @@ def verify_webhook_signature(raw_body: bytes, signature_header: str) -> bool:
         settings.razorpay_webhook_secret.encode("utf-8"), raw_body, hashlib.sha256
     ).hexdigest()
     return hmac.compare_digest(expected, signature_header)
+
+
+def verify_payment_signature(payment_id: str, subscription_id: str, signature: str) -> bool:
+    """Verifies a Standard Checkout subscription-authorization callback, per
+    Razorpay's documented formula: HMAC-SHA256 over "{payment_id}|{subscription_id}"
+    keyed on the account's key secret (not the webhook secret -- a different
+    key from verify_webhook_signature above).
+
+    `subscription_id` must be the value our own server already recorded for
+    this customer (see app.db.get_latest_pending_subscription), never the
+    razorpay_subscription_id the browser's callback reports -- Razorpay's own
+    integration guide warns against trusting that value for this comparison,
+    since a tampered client response could otherwise claim any subscription id.
+    """
+    if not settings.razorpay_key_secret or not signature:
+        return False
+    payload = f"{payment_id}|{subscription_id}".encode("utf-8")
+    expected = hmac.new(settings.razorpay_key_secret.encode("utf-8"), payload, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
