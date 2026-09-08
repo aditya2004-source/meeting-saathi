@@ -74,7 +74,7 @@ def send_otp(email: str = Form(...)):
     if not auth.otp_send_allowed(email):
         raise HTTPException(status_code=429, detail="too_many_requests")
     code = auth.issue_otp(email)
-    send_email(
+    sent = send_email(
         to=email,
         subject="Your Meeting Saathi verification code",
         text_body=(
@@ -83,6 +83,11 @@ def send_otp(email: str = Form(...)):
             "you can ignore this email."
         ),
     )
+    if not sent:
+        # send_email() already logged the real failure reason (e.g. Resend
+        # API/network error) -- never surface that detail to the customer,
+        # and never report success for an email that didn't go out.
+        raise HTTPException(status_code=502, detail="email_send_failed")
     return JSONResponse({"ok": True})
 
 

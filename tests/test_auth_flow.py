@@ -128,6 +128,46 @@ def test_send_otp_is_rate_limited(tmp_path, monkeypatch):
     assert limited.status_code == 429
 
 
+def test_send_otp_reports_success_only_when_the_email_actually_sends(tmp_path, monkeypatch):
+    """Production-audit fix: /auth/send-otp must check send_email()'s
+    return value rather than always answering {"ok": True} -- otherwise a
+    customer is told a code was sent when Resend actually failed to
+    deliver it.
+    """
+    from unittest.mock import patch
+
+    _fresh_db(tmp_path, monkeypatch)
+    email = "priya@example.com"
+    _signup_and_consent(email)
+
+    with patch("app.auth_routes.send_email", return_value=True) as mock_send:
+        response = client.post("/auth/send-otp", data={"email": email})
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    mock_send.assert_called_once()
+
+
+def test_send_otp_returns_a_safe_generic_error_when_the_email_fails_to_send(tmp_path, monkeypatch):
+    from unittest.mock import patch
+
+    _fresh_db(tmp_path, monkeypatch)
+    email = "priya@example.com"
+    _signup_and_consent(email)
+
+    with patch("app.auth_routes.send_email", return_value=False):
+        response = client.post("/auth/send-otp", data={"email": email})
+
+    assert response.status_code == 502
+    body = response.json()
+    assert body["detail"] == "email_send_failed"
+    # Never leak the provider name, an exception message, or the OTP itself
+    # into the response the customer's browser receives.
+    body_text = response.text.lower()
+    for leaked_term in ("resend", "traceback", "exception", "api key"):
+        assert leaked_term not in body_text
+
+
 def test_returning_verified_customer_does_not_need_to_reconsent(tmp_path, monkeypatch):
     _fresh_db(tmp_path, monkeypatch)
     email = "priya@example.com"
