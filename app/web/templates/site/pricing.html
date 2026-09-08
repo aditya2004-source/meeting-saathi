@@ -63,30 +63,46 @@
     apply(select.value);
   }
 
-  document.querySelectorAll('[data-subscribe]').forEach((btn) => {
+  const subscribeButtons = document.querySelectorAll('[data-subscribe]');
+  // Guards against a rapid double-click (or clicking a second plan while
+  // the first click's request is still in flight) firing two subscribe
+  // requests -- disable every subscribe button for the duration of one
+  // request, re-enabling only on failure (success navigates away anyway).
+  let subscribing = false;
+
+  subscribeButtons.forEach((btn) => {
     btn.addEventListener('click', async () => {
+      if (subscribing) return;
+      subscribing = true;
+      subscribeButtons.forEach((b) => (b.disabled = true));
+
       const errorEl = document.getElementById('pricing-error');
       errorEl.hidden = true;
       const billingCycle = btn.dataset.subscribe;
       const currency = select ? select.value : 'INR';
 
-      const me = await fetch('/account/me');
-      if (!me.ok) {
-        window.location.href = '/signup';
-        return;
-      }
+      try {
+        const me = await fetch('/account/me');
+        if (!me.ok) {
+          window.location.href = '/signup';
+          return;
+        }
 
-      const response = await fetch('/billing/subscribe', {
-        method: 'POST',
-        body: new URLSearchParams({ billing_cycle: billingCycle, currency }),
-      });
-      if (!response.ok) {
-        errorEl.textContent = 'Could not start checkout -- please try again in a moment.';
-        errorEl.hidden = false;
-        return;
+        const response = await fetch('/billing/subscribe', {
+          method: 'POST',
+          body: new URLSearchParams({ billing_cycle: billingCycle, currency }),
+        });
+        if (!response.ok) {
+          errorEl.textContent = 'Could not start checkout -- please try again in a moment.';
+          errorEl.hidden = false;
+          return;
+        }
+        const { checkout_url } = await response.json();
+        window.location.href = checkout_url;
+      } finally {
+        subscribing = false;
+        subscribeButtons.forEach((b) => (b.disabled = false));
       }
-      const { checkout_url } = await response.json();
-      window.location.href = checkout_url;
     });
   });
 })();

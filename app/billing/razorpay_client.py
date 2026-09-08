@@ -40,14 +40,19 @@ def find_or_create_customer(email: str, name: str) -> str:
     return response.json()["id"]
 
 
-def create_subscription(plan_id: str, customer_id: str, notes: dict) -> dict:
+def create_subscription(plan_id: str, customer_id: str, billing_cycle: str, notes: dict) -> dict:
     """Returns the raw Razorpay Subscription entity (has "id" and
     "short_url" -- the hosted checkout page to redirect the customer to).
     `total_count` is required by Razorpay's API; 120 monthly cycles (10
     years) / 20 yearly cycles is effectively "until cancelled" for a
     subscription product like this.
+
+    `billing_cycle` must come from the app's own plan config
+    (app.billing.plans.Plan.billing_cycle), never inferred from `plan_id`
+    itself -- real Razorpay-generated plan ids are opaque strings with no
+    guaranteed relationship to the cycle they represent.
     """
-    total_count = 120 if "monthly" in plan_id else 20
+    total_count = 120 if billing_cycle == "monthly" else 20
     response = httpx.post(
         f"{_BASE_URL}/subscriptions",
         auth=_auth(),

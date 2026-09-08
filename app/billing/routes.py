@@ -6,6 +6,7 @@ import datetime
 import hashlib
 import json
 import logging
+import threading
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -16,6 +17,19 @@ from app.billing import plans, razorpay_client
 logger = logging.getLogger("meeting_saathi")
 
 router = APIRouter(prefix="/billing")
+
+# Guards against a rapid double-click on the pricing page's subscribe
+# button firing two concurrent /billing/subscribe requests, which would
+# otherwise create two real Razorpay subscriptions for the same customer
+# (the client-side click-guard in pricing.html covers the common case, this
+# is the server-side backstop for the request that still gets through --
+# e.g. two clicks close enough together that the first hasn't disabled the
+# button yet). A single customer_id in flight at a time is all this needs
+# to prevent; a plain in-memory set is sufficient because this app runs as
+# a single uvicorn process (see docker-compose.yml) -- no cross-process
+# coordination required.
+_subscribe_in_progress: set[str] = set()
+_subscribe_in_progress_lock = threading.Lock()
 
 
 @router.post("/subscribe")
@@ -28,18 +42,37 @@ def subscribe(
     plan = plans.get_plan(billing_cycle, currency)
     if plan is None:
         raise HTTPException(status_code=400, detail="unknown_plan")
+    if not plan.is_purchasable:
+        # Defense in depth -- the pricing page's currency selector and
+        # subscribe buttons already only offer purchasable currencies (see
+        # app.site_routes._pricing_context), but a direct API call must be
+        # rejected too rather than attempting to create a Razorpay
+        # subscription against a placeholder plan id.
+        raise HTTPException(status_code=400, detail="plan_not_available")
 
-    razorpay_customer_id = razorpay_client.find_or_create_customer(customer["email"], customer["name"])
-    subscription_payload = razorpay_client.create_subscription(
-        plan.razorpay_plan_id, razorpay_customer_id, notes={"customer_id": customer["id"]}
-    )
-    db.create_pending_subscription(
-        customer_id=customer["id"],
-        plan=billing_cycle,
-        currency=plan.currency,
-        razorpay_subscription_id=subscription_payload["id"],
-    )
-    return JSONResponse({"checkout_url": subscription_payload["short_url"]})
+    with _subscribe_in_progress_lock:
+        if customer["id"] in _subscribe_in_progress:
+            raise HTTPException(status_code=409, detail="subscription_creation_in_progress")
+        _subscribe_in_progress.add(customer["id"])
+
+    try:
+        razorpay_customer_id = razorpay_client.find_or_create_customer(customer["email"], customer["name"])
+        subscription_payload = razorpay_client.create_subscription(
+            plan.razorpay_plan_id,
+            razorpay_customer_id,
+            billing_cycle=plan.billing_cycle,
+            notes={"customer_id": customer["id"]},
+        )
+        db.create_pending_subscription(
+            customer_id=customer["id"],
+            plan=billing_cycle,
+            currency=plan.currency,
+            razorpay_subscription_id=subscription_payload["id"],
+        )
+        return JSONResponse({"checkout_url": subscription_payload["short_url"]})
+    finally:
+        with _subscribe_in_progress_lock:
+            _subscribe_in_progress.discard(customer["id"])
 
 
 @router.post("/cancel")

@@ -46,11 +46,19 @@ def _pricing_context() -> dict:
     """Real plan/pricing data from app.billing.plans -- the single source of
     truth for what's charged. Used by both / and /pricing so neither page can
     silently drift from the real billing configuration.
+
+    Only purchasable currencies (real Razorpay plan ids -- currently INR
+    only, see app.billing.plans) are included: international pricing stays
+    defined in app.billing.plans for later activation, but must not render
+    a currency-switcher option or subscribe button that would hit
+    /billing/subscribe for a plan Razorpay can't actually create yet.
     """
     by_currency = {}
     for plan in plans_module.all_plans():
+        if not plan.is_purchasable:
+            continue
         by_currency.setdefault(plan.currency, {})[plan.billing_cycle] = plan
-    return {"plans_by_currency": by_currency, "currencies": list(plans_module.CURRENCIES)}
+    return {"plans_by_currency": by_currency, "currencies": plans_module.purchasable_currencies()}
 
 # Every PUBLIC page, for sitemap.xml -- adding a new public page means
 # adding it here, so the sitemap can't silently drift from what's real.

@@ -71,6 +71,34 @@ def test_get_plan_returns_none_for_unknown_combo():
     assert plans.get_plan("weekly", "INR") is None
 
 
+def test_inr_plans_are_purchasable_with_the_real_razorpay_plan_ids():
+    monthly = plans.get_plan("monthly", "INR")
+    yearly = plans.get_plan("yearly", "INR")
+
+    assert monthly.is_purchasable is True
+    assert monthly.razorpay_plan_id == "plan_TZXnf7CMdmdDfm"
+    assert yearly.is_purchasable is True
+    assert yearly.razorpay_plan_id == "plan_TZXpRhkLY9q1NK"
+
+
+def test_international_plans_remain_defined_but_not_purchasable():
+    """International pricing architecture stays available for later
+    activation -- the Plan objects still exist with real display prices --
+    but must not be purchasable while their Razorpay plan ids are
+    placeholders (multi-currency isn't enabled on the Razorpay account yet).
+    """
+    for currency in ("USD", "EUR", "GBP"):
+        for cycle in ("monthly", "yearly"):
+            plan = plans.get_plan(cycle, currency)
+            assert plan is not None
+            assert plan.is_purchasable is False
+            assert plan.razorpay_plan_id.startswith("plan_placeholder_")
+
+
+def test_purchasable_currencies_is_inr_only_for_now():
+    assert plans.purchasable_currencies() == ["INR"]
+
+
 # --- webhook signature ---------------------------------------------------
 
 
@@ -120,6 +148,9 @@ def test_subscribe_creates_a_pending_subscription_and_returns_checkout_url(tmp_p
     assert response.status_code == 200
     assert response.json() == {"checkout_url": "https://rzp.io/i/abc123"}
     mock_create.assert_called_once()
+    # billing_cycle must be passed through explicitly from the resolved
+    # Plan, not left for create_subscription to guess at from the plan id.
+    assert mock_create.call_args.kwargs["billing_cycle"] == "monthly"
     subscription = db.get_subscription_by_razorpay_id("sub_test123")
     assert subscription is not None
     assert subscription["customer_id"] == customer["id"]
@@ -134,6 +165,135 @@ def test_subscribe_rejects_an_unknown_plan(tmp_path, monkeypatch):
     response = session.post("/billing/subscribe", data={"billing_cycle": "weekly", "currency": "INR"})
 
     assert response.status_code == 400
+
+
+def test_subscribe_rejects_a_currently_non_purchasable_currency(tmp_path, monkeypatch):
+    """Defense in depth: even though the pricing page's UI only offers INR
+    right now, a direct API call for a currency that has a defined Plan but
+    no real Razorpay plan id yet (USD/EUR/GBP) must still be rejected
+    rather than attempting to create a subscription against a placeholder
+    plan id.
+    """
+    _fresh_db(tmp_path, monkeypatch)
+    customer = _verified_customer("priya@example.com")
+    session = _logged_in_client(customer)
+
+    with patch("app.billing.routes.razorpay_client.find_or_create_customer") as mock_find, patch(
+        "app.billing.routes.razorpay_client.create_subscription"
+    ) as mock_create:
+        response = session.post("/billing/subscribe", data={"billing_cycle": "monthly", "currency": "USD"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "plan_not_available"
+    mock_find.assert_not_called()
+    mock_create.assert_not_called()
+
+
+def test_subscribe_rejects_a_concurrent_duplicate_for_the_same_customer(tmp_path, monkeypatch):
+    """Server-side backstop for a rapid double-click getting past the
+    pricing page's own client-side click-guard: a second /billing/subscribe
+    request for the same customer, arriving while the first is still being
+    processed, must not create a second Razorpay subscription.
+    """
+    _fresh_db(tmp_path, monkeypatch)
+    customer = _verified_customer("priya@example.com")
+    session = _logged_in_client(customer)
+
+    from app.billing import routes as billing_routes
+
+    # Simulate "request 1 already in flight" directly, since actually
+    # racing two real threads through TestClient is flaky to assert on --
+    # the in-progress-set membership is exactly what the route checks.
+    billing_routes._subscribe_in_progress.add(customer["id"])
+    try:
+        with patch("app.billing.routes.razorpay_client.find_or_create_customer") as mock_find, patch(
+            "app.billing.routes.razorpay_client.create_subscription"
+        ) as mock_create:
+            response = session.post("/billing/subscribe", data={"billing_cycle": "monthly", "currency": "INR"})
+    finally:
+        billing_routes._subscribe_in_progress.discard(customer["id"])
+
+    assert response.status_code == 409
+    mock_find.assert_not_called()
+    mock_create.assert_not_called()
+
+
+def test_subscribe_succeeds_after_a_prior_in_flight_request_completes(tmp_path, monkeypatch):
+    """The in-progress guard must clear once a request finishes (success or
+    failure) -- it should never permanently lock a customer out.
+    """
+    _fresh_db(tmp_path, monkeypatch)
+    customer = _verified_customer("priya@example.com")
+    session = _logged_in_client(customer)
+
+    from app.billing import routes as billing_routes
+
+    with patch("app.billing.routes.razorpay_client.find_or_create_customer", return_value="cust_test123"), patch(
+        "app.billing.routes.razorpay_client.create_subscription",
+        return_value={"id": "sub_test123", "short_url": "https://rzp.io/i/abc123"},
+    ):
+        response = session.post("/billing/subscribe", data={"billing_cycle": "monthly", "currency": "INR"})
+
+    assert response.status_code == 200
+    assert customer["id"] not in billing_routes._subscribe_in_progress
+
+
+# --- razorpay_client.create_subscription: total_count -----------------------
+
+
+def test_create_subscription_uses_120_cycles_for_monthly_regardless_of_plan_id(monkeypatch):
+    """The bug this replaces inferred cycle length by checking whether the
+    literal word "monthly" appeared in the plan_id string -- true only for
+    this project's own placeholder ids. Real Razorpay plan ids are opaque
+    (e.g. "plan_QRstUvWxYz1234") and would silently fall through to the
+    wrong total_count under that logic. billing_cycle must be the only
+    thing that decides this, passed in explicitly by the caller.
+    """
+    from app.billing import razorpay_client
+
+    captured = {}
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"id": "sub_x", "short_url": "https://rzp.io/i/x"}
+
+    def _fake_post(url, auth, json, timeout):
+        captured["json"] = json
+        return _FakeResponse()
+
+    monkeypatch.setattr(razorpay_client.httpx, "post", _fake_post)
+
+    razorpay_client.create_subscription("plan_QRstUvWxYz1234", "cust_1", billing_cycle="monthly", notes={})
+
+    assert captured["json"]["total_count"] == 120
+
+
+def test_create_subscription_uses_20_cycles_for_yearly_regardless_of_plan_id(monkeypatch):
+    from app.billing import razorpay_client
+
+    captured = {}
+
+    class _FakeResponse:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"id": "sub_x", "short_url": "https://rzp.io/i/x"}
+
+    def _fake_post(url, auth, json, timeout):
+        captured["json"] = json
+        return _FakeResponse()
+
+    monkeypatch.setattr(razorpay_client.httpx, "post", _fake_post)
+
+    # Opaque real-looking id that happens to contain neither "monthly" nor
+    # "yearly" -- proves the decision no longer comes from the id at all.
+    razorpay_client.create_subscription("plan_QRstUvWxYz1234", "cust_1", billing_cycle="yearly", notes={})
+
+    assert captured["json"]["total_count"] == 20
 
 
 # --- POST /billing/webhook/razorpay ----------------------------------------

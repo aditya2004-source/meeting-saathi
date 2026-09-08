@@ -134,3 +134,20 @@ def test_feedback_submission_persists_a_real_row(tmp_path, monkeypatch):
 def test_feedback_page_shows_thank_you_after_submission():
     response = client.get("/feedback", params={"submitted": "1"})
     assert "Thanks" in response.text
+
+
+def test_pricing_page_only_offers_purchasable_currencies():
+    """International (USD/EUR/GBP) plans are deferred -- still defined in
+    app.billing.plans for later activation, but the pricing page must never
+    render a currency option or subscribe button for a currency Razorpay
+    can't actually create a subscription for yet (see
+    app.site_routes._pricing_context).
+    """
+    for path in ("/", "/pricing"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert 'data-plan-block="INR"' in response.text
+        for currency in ("USD", "EUR", "GBP"):
+            assert f'data-plan-block="{currency}"' not in response.text
+            assert f'data-currency="{currency}"' not in response.text
+            assert f'value="{currency}"' not in response.text
