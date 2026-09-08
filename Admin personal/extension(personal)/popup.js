@@ -17,7 +17,7 @@ const setupStatusEl = document.getElementById("setupStatus");
 // update all three files' DEFAULT_SERVER_BASE_URL and repackage if the
 // tunnel URL ever changes, rather than asking a non-technical customer to
 // know what to paste into a "server" field.
-const DEFAULT_SERVER_BASE_URL = "http://localhost:8420";
+const DEFAULT_SERVER_BASE_URL = "https://meetingsaathi.apriltech.org";
 
 // Phase 1 (sharing with BA testers): a plain self-reported name, no
 // login/password -- sent with every /meetings/start call so the backend can

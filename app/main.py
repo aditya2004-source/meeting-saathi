@@ -45,7 +45,14 @@ if not logger.handlers:
     _handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(_handler)
 
-app = FastAPI(title="Meeting Saathi")
+app = FastAPI(
+    title="Meeting Saathi",
+    # See config.py's disable_api_docs -- off (docs/redoc/schema all public)
+    # by default for local dev, set DISABLE_API_DOCS=true in production.
+    docs_url=None if settings.disable_api_docs else "/docs",
+    redoc_url=None if settings.disable_api_docs else "/redoc",
+    openapi_url=None if settings.disable_api_docs else "/openapi.json",
+)
 templates = Jinja2Templates(directory="app/web/templates")
 app.mount("/static", StaticFiles(directory="app/web/static"), name="static")
 app.include_router(auth_router)

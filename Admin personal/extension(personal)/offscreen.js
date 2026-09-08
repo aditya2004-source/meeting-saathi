@@ -20,7 +20,7 @@
 // can't share code) -- set once in popup.js's Setup section. Defaults to
 // the current Cloudflare Tunnel URL so a customer install works without
 // them ever typing a server address; update if the tunnel URL changes.
-const DEFAULT_SERVER_BASE_URL = "http://localhost:8420";
+const DEFAULT_SERVER_BASE_URL = "https://meetingsaathi.apriltech.org";
 
 // Defensive: this is the very first `await` in both uploadChunk() and
 // logDebug(), and neither of those callers originally wrapped it in a

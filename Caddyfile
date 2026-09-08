@@ -1,6 +1,5 @@
-# Phase 9: replace with your real domain before deploying -- Caddy issues
-# and renews a real Let's Encrypt certificate for it automatically the
-# first time it starts, no manual certbot/nginx config needed.
-meetingsaathi.example.com {
+# Caddy issues and renews a real Let's Encrypt certificate for this domain
+# automatically the first time it starts -- no manual certbot/nginx config.
+meetingsaathi.apriltech.org {
 	reverse_proxy app:8420
 }

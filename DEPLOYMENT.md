@@ -22,9 +22,10 @@ document is what to actually do, in order, to go live.
   `https://<your-real-domain>/*` (keep `http://localhost:8420/*` for local dev).
   Re-run `python scripts/build_extension_zip.py` afterward so the downloadable
   zip reflects the change.
-- Update `Admin personal/extension(personal)/background.js` and `offscreen.js`'s
-  `DEFAULT_SERVER_BASE_URL` constant to the real `https://<your-domain>` (both
-  files independently hardcode this -- no shared config, see their own comments).
+- Update `Admin personal/extension(personal)/background.js`, `offscreen.js`,
+  AND `popup.js`'s `DEFAULT_SERVER_BASE_URL` constant to the real
+  `https://<your-domain>` -- all THREE files independently hardcode this, no
+  shared config (see their own comments; popup.js's copy is easy to miss).
 
 ## 3. Fill in real secrets
 
@@ -57,6 +58,9 @@ Copy `.env.example` to `.env` on the VPS (never commit `.env`) and fill in:
   id (see manifest.json's pinned `key` -- the id is
   `bflaaogdbjndnpjadgdnliajmfoihjgf` as long as that key isn't changed) and the
   real domain, e.g. `chrome-extension://bflaaogdbjndnpjadgdnliajmfoihjgf,https://<your-domain>`.
+- `DISABLE_API_DOCS=true` -- turns off the public `/docs`, `/redoc`, and
+  `/openapi.json` routes FastAPI serves by default. Pure hardening, no
+  functional impact; leave unset for local dev.
 
 ## 4. Deploy
 
@@ -71,8 +75,16 @@ Confirm `https://<your-domain>/healthz` returns `{"ok": true, "db": true}`.
 ## 5. Backups
 
 `scripts/backup.py` + `scripts/reap_working_dirs.py` already exist (Phase 0).
-Inside the container's environment (or via `docker compose exec app ...`), set
-up a cron/systemd-timer equivalent of `scripts/systemd/meeting-saathi-backup.*`
+`scripts/backup.py` writes to `<project_root>/backups`, which inside the
+container is `/app/backups` -- part of the container's own writable layer,
+NOT the persisted `/data` volume. `docker-compose.yml` already bind-mounts
+`./backups:/app/backups` on the host for exactly this reason: without it,
+every backup would be silently destroyed on the next `docker compose up -d
+--build`. Run backup.py via `docker compose exec -T app python3
+scripts/backup.py --keep 7` (note: `scripts/systemd/meeting-saathi-backup.*`
+below are bare-metal templates from before this project used Docker --
+adapt their `ExecStart` to the `docker compose exec` form, they don't work
+as-is against a container deployment) and set that up on a cron/systemd-timer
 pointed at the container's `/data` volume. **Actually restore a backup once**
 to confirm it works, don't just assume the script does.
 

@@ -1,12 +1,20 @@
-# Phase 9: minimal production deployment -- the app container (built from
-# the existing Dockerfile) plus a Caddy reverse proxy that gets automatic
-# HTTPS for free. See DEPLOYMENT.md for the full setup runbook; this file
-# alone is not enough (DNS, .env, and the domain in Caddyfile still need
-# real values filled in by hand).
+# Minimal production deployment -- the app container (built from the
+# existing Dockerfile) plus a Caddy reverse proxy that gets automatic HTTPS
+# for free. See DEPLOYMENT.md for the full setup runbook; this file alone
+# is not enough (DNS, .env, and the domain in Caddyfile still need real
+# values filled in by hand).
 services:
   app:
     build: .
     restart: unless-stopped
+    # --proxy-headers/--forwarded-allow-ips: Caddy talks plain HTTP to this
+    # container over the internal Docker network: without this, the app has
+    # no way to know the original request was HTTPS, so anything built from
+    # request.url/request.base_url (canonical URLs, OG tags) would report
+    # http:// instead of https://. Safe to trust ALL peers here specifically
+    # because this container's port is never published to the host/internet
+    # (see `expose` below) -- Caddy is the only thing that can ever reach it.
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8420", "--proxy-headers", "--forwarded-allow-ips=*"]
     env_file:
       - .env
     environment:
@@ -15,6 +23,13 @@ services:
       - BASE_STORAGE_DIR=/data/storage
     volumes:
       - meeting_saathi_data:/data
+      # Bind-mounted to the HOST filesystem, not another named volume --
+      # scripts/backup.py writes to <project_root>/backups (i.e. /app/backups
+      # inside this container), which is otherwise part of the container's
+      # own writable layer and would be silently destroyed on the next
+      # `docker compose up -d --build`. This makes backups survive a
+      # container rebuild, which is the entire point of taking them.
+      - ./backups:/app/backups
     expose:
       - "8420"
     healthcheck:
@@ -22,6 +37,11 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
   caddy:
     image: caddy:2-alpine
@@ -35,6 +55,11 @@ services:
       - caddy_config:/config
     depends_on:
       - app
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
 
 volumes:
   meeting_saathi_data:

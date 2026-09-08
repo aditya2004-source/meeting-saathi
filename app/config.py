@@ -246,6 +246,14 @@ class Settings(BaseSettings):
             return ["*"]
         return [origin.strip() for origin in self.cors_allowed_origins.split(",") if origin.strip()]
 
+    # Production-deployment hardening: FastAPI serves interactive API docs
+    # (/docs, /redoc) and the raw OpenAPI schema (/openapi.json) publicly by
+    # default. Harmless functionally (no secrets in the schema), but there's
+    # no reason to expose the full route/shape inventory to the public
+    # internet once real customer accounts exist -- default False so local
+    # dev/testing is unaffected; set DISABLE_API_DOCS=true in production.
+    disable_api_docs: bool = False
+
     # Internal paths -- project_root itself is not env-configurable (it's
     # derived from this file's own location), but db_path/working_dir are,
     # same pattern as base_storage_dir above. Needed for Railway: the

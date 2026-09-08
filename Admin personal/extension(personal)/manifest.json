@@ -9,16 +9,13 @@
   "host_permissions": [
     "https://meet.google.com/*",
     "http://localhost:8420/*",
-    "https://*.up.railway.app/*",
-    "https://*.trycloudflare.com/*",
-    "https://*.ngrok-free.dev/*",
-    "https://*.ngrok-free.app/*"
+    "https://meetingsaathi.apriltech.org/*"
   ],
-  "_comment_externally_connectable": "The 'https://meetingsaathi.example.com/*' entry below is a PLACEHOLDER -- update to the real deployed domain once Phase 9 picks one, and keep it updated before shipping to real customers. localhost:8420 is kept for local development/testing of the pairing flow itself.",
+  "_comment_externally_connectable": "Real production domain (meetingsaathi.apriltech.org) plus localhost:8420, kept for local development/testing of the pairing flow only -- no placeholder, tunnel, or hosting-provider wildcard host permissions left in a production build.",
   "externally_connectable": {
     "matches": [
       "http://localhost:8420/*",
-      "https://meetingsaathi.example.com/*"
+      "https://meetingsaathi.apriltech.org/*"
     ]
   },
   "background": {
