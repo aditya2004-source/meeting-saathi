@@ -1,0 +1,46 @@
+{
+  "manifest_version": 3,
+  "name": "Meeting Saathi",
+  "version": "1.0.0",
+  "description": "Turn Google Meet calls into Minutes of Meeting, Meeting Analysis, and Business Process Flow documents.",
+  "permissions": ["tabCapture", "offscreen", "storage", "activeTab", "notifications"],
+  "host_permissions": [
+    "https://meet.google.com/*",
+    "https://meetingsaathi.apriltech.org/*"
+  ],
+  "externally_connectable": {
+    "matches": [
+      "https://meetingsaathi.apriltech.org/*"
+    ]
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://meet.google.com/*"],
+      "js": ["content_script.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Meeting Saathi",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
+  },
+  "commands": {
+    "start-recording": {
+      "suggested_key": { "default": "Ctrl+Shift+S", "mac": "Command+Shift+S" },
+      "description": "Start recording the current Google Meet call"
+    }
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
+}

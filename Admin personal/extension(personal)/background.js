@@ -345,13 +345,20 @@ async function startMeetingRun(title, clientName = "") {
       too_many_attempts_today: "Too many attempts today -- please try again tomorrow.",
       fair_use_ceiling_reached: "Monthly usage limit reached -- contact support.",
     };
-    let message = `server returned ${response.status} from /meetings/start`;
+    // 401 specifically means no valid session/device token at all -- i.e.
+    // the customer never connected their account (or it was disconnected).
+    // Checked by status code, not the "Not authenticated" detail string, so
+    // this doesn't silently stop matching if that string ever changes.
+    let message =
+      response.status === 401
+        ? "Connect your Meeting Saathi account first, then start recording."
+        : `server returned ${response.status} from /meetings/start`;
     try {
       const body = await response.json();
       if (body && body.message) message = body.message;
       else if (body && ENTITLEMENT_MESSAGES[body.detail]) message = ENTITLEMENT_MESSAGES[body.detail];
     } catch {
-      // response body wasn't JSON -- keep the generic message above.
+      // response body wasn't JSON -- keep the message already chosen above.
     }
     throw new Error(message);
   }
