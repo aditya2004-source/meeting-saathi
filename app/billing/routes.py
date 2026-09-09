@@ -166,6 +166,33 @@ def _extract_current_period_end(payload: dict) -> str | None:
 async def razorpay_webhook(request: Request):
     raw_body = await request.body()
     signature = request.headers.get("x-razorpay-signature", "")
+
+    # --- TEMPORARY DIAGNOSTIC CAPTURE (2026-09-09) -- remove before final commit ---
+    # Captures one raw request exactly as FastAPI/Starlette received it (this
+    # IS the ASGI-boundary content -- request.body() reads directly from the
+    # ASGI receive() stream, nothing sits between that and this line), so the
+    # root cause of repeated signature-verification failures can be isolated
+    # server-side without ever exposing the body/signature/secret in any
+    # tool output or chat. Deletes any prior capture first so only the
+    # single next request is captured.
+    import os as _diag_os
+    _diag_dir = "/tmp/webhook_diag"
+    if not _diag_os.path.exists(_diag_dir):
+        _diag_os.makedirs(_diag_dir, mode=0o700)
+        with open(_diag_dir + "/body.bin", "wb") as _f:
+            _f.write(raw_body)
+        with open(_diag_dir + "/signature.txt", "w") as _f:
+            _f.write(signature)
+        with open(_diag_dir + "/event_id.txt", "w") as _f:
+            _f.write(request.headers.get("x-razorpay-event-id", ""))
+        with open(_diag_dir + "/content_length_header.txt", "w") as _f:
+            _f.write(request.headers.get("content-length", ""))
+        _diag_os.chmod(_diag_dir + "/body.bin", 0o600)
+        _diag_os.chmod(_diag_dir + "/signature.txt", 0o600)
+        _diag_os.chmod(_diag_dir + "/event_id.txt", 0o600)
+        _diag_os.chmod(_diag_dir + "/content_length_header.txt", 0o600)
+    # --- END TEMPORARY DIAGNOSTIC CAPTURE ---
+
     if not razorpay_client.verify_webhook_signature(raw_body, signature):
         raise HTTPException(status_code=400, detail="invalid_signature")
 
