@@ -166,32 +166,6 @@ def _extract_current_period_end(payload: dict) -> str | None:
 async def razorpay_webhook(request: Request):
     raw_body = await request.body()
     signature = request.headers.get("x-razorpay-signature", "")
-
-    # --- TEMPORARY DIAGNOSTIC CAPTURE v2 (2026-09-09) -- remove before final commit ---
-    # v1 revealed X-Razorpay-Signature arrived EMPTY while X-Razorpay-Event-Id
-    # did not -- this capture records every header NAME and its value LENGTH
-    # only (never the value itself, except the always-public method/path) to
-    # find out under what exact name/casing Razorpay's signature is actually
-    # arriving, and whether Caddy is stripping/renaming it before this ASGI
-    # app ever sees the request.
-    import os as _diag_os
-    _diag_dir = "/tmp/webhook_diag2"
-    if not _diag_os.path.exists(_diag_dir):
-        _diag_os.makedirs(_diag_dir, mode=0o700)
-        lines = []
-        for name, value in request.headers.items():
-            lines.append(name + ": len=" + str(len(value)))
-        with open(_diag_dir + "/header_names_and_lengths.txt", "w") as _f:
-            _f.write("\n".join(lines))
-        with open(_diag_dir + "/body.bin", "wb") as _f:
-            _f.write(raw_body)
-        with open(_diag_dir + "/signature_via_get.txt", "w") as _f:
-            _f.write(signature)
-        _diag_os.chmod(_diag_dir + "/header_names_and_lengths.txt", 0o600)
-        _diag_os.chmod(_diag_dir + "/body.bin", 0o600)
-        _diag_os.chmod(_diag_dir + "/signature_via_get.txt", 0o600)
-    # --- END TEMPORARY DIAGNOSTIC CAPTURE v2 ---
-
     if not razorpay_client.verify_webhook_signature(raw_body, signature):
         raise HTTPException(status_code=400, detail="invalid_signature")
 
