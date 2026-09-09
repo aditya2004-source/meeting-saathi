@@ -801,17 +801,22 @@ def create_pending_subscription(customer_id: str, plan: str, currency: str, razo
     return get_subscription(subscription_id)
 
 
-def get_latest_pending_subscription(customer_id: str) -> Optional[dict[str, Any]]:
-    """The customer's most recent not-yet-activated subscription (status
-    "created") -- used only to look up the authoritative razorpay_subscription_id
-    for verifying a Standard Checkout authorization callback server-side.
-    Never used to grant entitlement (see get_active_subscription above,
-    which requires status == "active").
+def get_latest_subscription_for_customer(customer_id: str) -> Optional[dict[str, Any]]:
+    """The customer's most recent subscription attempt, regardless of
+    status -- used to look up the authoritative razorpay_subscription_id for
+    verifying a Standard Checkout authorization callback server-side
+    (app.billing.routes.verify_subscription_auth). Deliberately not filtered
+    to status == "created": a retried/refreshed callback for a subscription
+    this same endpoint already reconciled to "active" must still find that
+    row (for its idempotency check) rather than 404 as if nothing existed.
+    Never used to grant entitlement on its own (see get_active_subscription
+    above, which requires status == "active" and is the only thing
+    app.entitlement ever consults).
     """
     with _connect() as conn:
         row = conn.execute(
             """SELECT * FROM subscriptions
-               WHERE customer_id = ? AND status = 'created'
+               WHERE customer_id = ?
                ORDER BY created_at DESC LIMIT 1""",
             (customer_id,),
         ).fetchone()
@@ -911,6 +916,18 @@ def create_payment(
         )
         row = conn.execute("SELECT * FROM payments WHERE id = ?", (payment_id,)).fetchone()
     return dict(row)
+
+
+def get_payment_by_razorpay_id(razorpay_payment_id: str) -> Optional[dict[str, Any]]:
+    """Used for idempotency by the server-side reconciliation path (POST
+    /billing/verify-subscription-auth) -- a retried/refreshed callback for a
+    payment already recorded here is a no-op, never a second payment row.
+    """
+    with _connect() as conn:
+        row = conn.execute(
+            "SELECT * FROM payments WHERE razorpay_payment_id = ?", (razorpay_payment_id,)
+        ).fetchone()
+    return dict(row) if row else None
 
 
 def list_payments(customer_id: Optional[str] = None) -> list[dict[str, Any]]:

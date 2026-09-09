@@ -6,8 +6,10 @@ import datetime
 import hashlib
 import json
 import logging
+import sqlite3
 import threading
 
+import httpx
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
@@ -86,29 +88,84 @@ def subscribe(
             _subscribe_in_progress.discard(customer["id"])
 
 
+def _unix_to_iso(timestamp) -> str | None:
+    if not timestamp:
+        return None
+    return datetime.datetime.fromtimestamp(timestamp, tz=datetime.timezone.utc).isoformat()
+
+
 @router.post("/verify-subscription-auth")
 def verify_subscription_auth(
     razorpay_payment_id: str = Form(...),
     razorpay_signature: str = Form(...),
     customer: dict = Depends(auth.get_current_customer),
 ):
-    """Confirms a Standard Checkout subscription-authorization callback is
-    genuine, for accurate immediate UI feedback only -- this never marks a
-    subscription active itself. That stays exclusively the job of the
-    verified Razorpay webhook (subscription.activated, see below), so there
-    is no risk of the browser being trusted to grant its own entitlement.
+    """Server-side reconciliation for Standard Checkout: confirms the
+    callback is genuine, then independently re-fetches the subscription and
+    payment from Razorpay's API (never trusting anything the browser
+    claims about plan/status/amount) before granting paid entitlement.
+
+    This is the PRIMARY activation path while the Razorpay webhook (below)
+    is debugged separately -- kept in place unchanged as a best-effort
+    secondary path, so a real webhook delivery that does succeed is still a
+    harmless no-op here via the same idempotency check.
     """
-    pending = db.get_latest_pending_subscription(customer["id"])
+    pending = db.get_latest_subscription_for_customer(customer["id"])
     if pending is None:
         raise HTTPException(status_code=404, detail="no_pending_subscription")
 
-    valid = razorpay_client.verify_payment_signature(
+    razorpay_subscription_id = pending["razorpay_subscription_id"]
+
+    if not razorpay_client.verify_payment_signature(
         payment_id=razorpay_payment_id,
-        subscription_id=pending["razorpay_subscription_id"],
+        subscription_id=razorpay_subscription_id,
         signature=razorpay_signature,
-    )
-    if not valid:
+    ):
         raise HTTPException(status_code=400, detail="signature_verification_failed")
+
+    # Idempotent: a refresh/retry of an already-reconciled payment is a
+    # no-op success, never a second payment row or a repeated API round-trip.
+    if db.get_payment_by_razorpay_id(razorpay_payment_id) is not None:
+        return JSONResponse({"ok": True})
+
+    try:
+        subscription = razorpay_client.get_subscription(razorpay_subscription_id)
+        payment = razorpay_client.get_payment(razorpay_payment_id)
+    except httpx.HTTPError:
+        logger.exception("Razorpay API call failed while reconciling subscription %s", razorpay_subscription_id)
+        raise HTTPException(status_code=502, detail="razorpay_verification_failed")
+
+    # Belongs to the exact subscription we created for this customer --
+    # redundant with the signature check above (which already keys on our
+    # own recorded id, never the browser's), kept as defense in depth.
+    if subscription.get("id") != razorpay_subscription_id:
+        raise HTTPException(status_code=400, detail="subscription_mismatch")
+
+    expected_plan = plans.get_plan(pending["plan"], pending["currency"])
+    if expected_plan is None or subscription.get("plan_id") != expected_plan.razorpay_plan_id:
+        raise HTTPException(status_code=400, detail="plan_mismatch")
+
+    if subscription.get("status") != "active" or not subscription.get("paid_count"):
+        raise HTTPException(status_code=400, detail="subscription_not_active")
+
+    if payment.get("status") != "captured":
+        raise HTTPException(status_code=400, detail="payment_not_captured")
+
+    db.update_subscription_status(
+        razorpay_subscription_id, status="active", current_period_end=_unix_to_iso(subscription.get("current_end"))
+    )
+    try:
+        db.create_payment(
+            customer_id=customer["id"],
+            razorpay_subscription_id=razorpay_subscription_id,
+            razorpay_payment_id=razorpay_payment_id,
+            original_currency=payment.get("currency", pending["currency"]),
+            original_amount_minor=payment.get("amount", 0),
+            status="captured",
+            inr_settlement_amount_minor=payment.get("base_amount"),
+        )
+    except sqlite3.IntegrityError:
+        pass  # a concurrent retry already inserted this exact payment first
     return JSONResponse({"ok": True})
 
 
@@ -156,10 +213,7 @@ def _extract_current_period_end(payload: dict) -> str | None:
     # Subscription entity shape; verify against a real webhook payload
     # before relying on this in production (flagged, same as the plan's own
     # note on the INR-settlement field name).
-    current_end = entity.get("current_end")
-    if not current_end:
-        return None
-    return datetime.datetime.fromtimestamp(current_end, tz=datetime.timezone.utc).isoformat()
+    return _unix_to_iso(entity.get("current_end"))
 
 
 @router.post("/webhook/razorpay")
@@ -196,21 +250,30 @@ async def razorpay_webhook(request: Request):
             subscription_id, status="active", current_period_end=_extract_current_period_end(payload)
         )
         payment_entity = payload.get("payload", {}).get("payment", {}).get("entity", {})
-        if payment_entity.get("id"):
-            db.create_payment(
-                customer_id=subscription["customer_id"],
-                razorpay_subscription_id=subscription_id,
-                razorpay_payment_id=payment_entity["id"],
-                original_currency=payment_entity.get("currency", subscription["currency"]),
-                original_amount_minor=payment_entity.get("amount", 0),
-                status="captured",
-                # Razorpay includes a "base_amount" (in the account's
-                # settlement currency, INR) on international payments per
-                # their documented multi-currency support -- confirm this
-                # exact field name against a real payload before relying on
-                # it for financial reporting (Phase 7).
-                inr_settlement_amount_minor=payment_entity.get("base_amount"),
-            )
+        # Guards against a genuine cross-path collision: the server-side
+        # reconciliation path (POST /billing/verify-subscription-auth) may
+        # already have recorded this exact razorpay_payment_id if it beat
+        # this webhook to it -- razorpay_payment_id is UNIQUE, so this would
+        # otherwise raise and fail an event Razorpay would then retry
+        # forever. Never a second payment row for the same real payment.
+        if payment_entity.get("id") and db.get_payment_by_razorpay_id(payment_entity["id"]) is None:
+            try:
+                db.create_payment(
+                    customer_id=subscription["customer_id"],
+                    razorpay_subscription_id=subscription_id,
+                    razorpay_payment_id=payment_entity["id"],
+                    original_currency=payment_entity.get("currency", subscription["currency"]),
+                    original_amount_minor=payment_entity.get("amount", 0),
+                    status="captured",
+                    # Razorpay includes a "base_amount" (in the account's
+                    # settlement currency, INR) on international payments per
+                    # their documented multi-currency support -- confirm this
+                    # exact field name against a real payload before relying on
+                    # it for financial reporting (Phase 7).
+                    inr_settlement_amount_minor=payment_entity.get("base_amount"),
+                )
+            except sqlite3.IntegrityError:
+                pass  # reconciliation path recorded it first, in the race window
     elif event_type in ("subscription.completed", "subscription.cancelled"):
         db.update_subscription_status(subscription_id, status="cancelled")
     elif event_type == "subscription.paused":

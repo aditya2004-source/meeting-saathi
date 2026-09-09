@@ -10,6 +10,7 @@ import hmac
 import json
 from unittest.mock import patch
 
+import httpx
 from fastapi.testclient import TestClient
 
 from app import auth, db
@@ -303,34 +304,69 @@ def test_create_subscription_uses_20_cycles_for_yearly_regardless_of_plan_id(mon
     assert captured["json"]["total_count"] == 20
 
 
-# --- db.get_latest_pending_subscription -------------------------------------
+# --- db.get_latest_subscription_for_customer ---------------------------------
 
 
-def test_get_latest_pending_subscription_returns_the_most_recent_created_row(tmp_path, monkeypatch):
+def test_get_latest_subscription_for_customer_returns_the_most_recent_row(tmp_path, monkeypatch):
     _fresh_db(tmp_path, monkeypatch)
     customer = _verified_customer("priya@example.com")
     db.create_pending_subscription(customer["id"], "monthly", "INR", "sub_old")
     db.create_pending_subscription(customer["id"], "monthly", "INR", "sub_new")
 
-    latest = db.get_latest_pending_subscription(customer["id"])
+    latest = db.get_latest_subscription_for_customer(customer["id"])
 
     assert latest["razorpay_subscription_id"] == "sub_new"
 
 
-def test_get_latest_pending_subscription_ignores_already_active_rows(tmp_path, monkeypatch):
+def test_get_latest_subscription_for_customer_includes_already_active_rows(tmp_path, monkeypatch):
+    """Deliberately NOT filtered to status == 'created' -- a retried/refreshed
+    Standard Checkout callback for a subscription this same reconciliation
+    endpoint already activated must still find that row (for its own
+    idempotency check), not 404 as if nothing existed.
+    """
     _fresh_db(tmp_path, monkeypatch)
     customer = _verified_customer("priya@example.com")
     db.create_pending_subscription(customer["id"], "monthly", "INR", "sub_active")
     db.update_subscription_status("sub_active", status="active")
 
-    assert db.get_latest_pending_subscription(customer["id"]) is None
+    latest = db.get_latest_subscription_for_customer(customer["id"])
+
+    assert latest is not None
+    assert latest["razorpay_subscription_id"] == "sub_active"
 
 
-def test_get_latest_pending_subscription_returns_none_with_no_rows(tmp_path, monkeypatch):
+def test_get_latest_subscription_for_customer_returns_none_with_no_rows(tmp_path, monkeypatch):
     _fresh_db(tmp_path, monkeypatch)
     customer = _verified_customer("priya@example.com")
 
-    assert db.get_latest_pending_subscription(customer["id"]) is None
+    assert db.get_latest_subscription_for_customer(customer["id"]) is None
+
+
+# --- db.get_payment_by_razorpay_id -------------------------------------------
+
+
+def test_get_payment_by_razorpay_id_finds_a_recorded_payment(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    customer = _verified_customer("priya@example.com")
+    db.create_payment(
+        customer_id=customer["id"],
+        razorpay_subscription_id="sub_test123",
+        razorpay_payment_id="pay_test123",
+        original_currency="INR",
+        original_amount_minor=29900,
+        status="captured",
+    )
+
+    found = db.get_payment_by_razorpay_id("pay_test123")
+
+    assert found is not None
+    assert found["customer_id"] == customer["id"]
+
+
+def test_get_payment_by_razorpay_id_returns_none_when_not_found(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+
+    assert db.get_payment_by_razorpay_id("pay_nonexistent") is None
 
 
 # --- razorpay_client.verify_payment_signature -------------------------------
@@ -376,27 +412,61 @@ def test_verify_payment_signature_rejects_when_no_key_secret_configured(monkeypa
 # --- POST /billing/verify-subscription-auth ---------------------------------
 
 
-def test_verify_subscription_auth_accepts_a_valid_signature(tmp_path, monkeypatch):
+def _valid_signature(payment_id: str, subscription_id: str, secret: str = "test-key-secret") -> str:
+    return hmac.new(secret.encode("utf-8"), f"{payment_id}|{subscription_id}".encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def _mock_active_subscription(plan_id: str = "plan_TZXnf7CMdmdDfm", paid_count: int = 1) -> dict:
+    return {
+        "id": "sub_test123",
+        "plan_id": plan_id,
+        "status": "active",
+        "paid_count": paid_count,
+        "current_end": 1791397800,
+    }
+
+
+def _mock_captured_payment(amount: int = 29900, currency: str = "INR") -> dict:
+    return {"id": "pay_test123", "status": "captured", "amount": amount, "currency": currency}
+
+
+def test_verify_subscription_auth_reconciles_and_activates_on_success(tmp_path, monkeypatch):
+    """The primary activation path while the webhook is debugged separately
+    -- confirms the callback, then independently re-fetches the subscription
+    and payment from Razorpay before touching anything, never trusting the
+    browser's own claims about plan/status/amount.
+    """
     _fresh_db(tmp_path, monkeypatch)
     monkeypatch.setattr(settings, "razorpay_key_secret", "test-key-secret")
     customer = _verified_customer("priya@example.com")
     session = _logged_in_client(customer)
     db.create_pending_subscription(customer["id"], "monthly", "INR", "sub_test123")
 
-    payment_id = "pay_test123"
-    signature = hmac.new(
-        "test-key-secret".encode("utf-8"), f"{payment_id}|sub_test123".encode("utf-8"), hashlib.sha256
-    ).hexdigest()
-
-    response = session.post(
-        "/billing/verify-subscription-auth",
-        data={"razorpay_payment_id": payment_id, "razorpay_signature": signature},
-    )
+    with patch("app.billing.routes.razorpay_client.get_subscription", return_value=_mock_active_subscription()) as mock_get_sub, patch(
+        "app.billing.routes.razorpay_client.get_payment", return_value=_mock_captured_payment()
+    ) as mock_get_payment:
+        response = session.post(
+            "/billing/verify-subscription-auth",
+            data={"razorpay_payment_id": "pay_test123", "razorpay_signature": _valid_signature("pay_test123", "sub_test123")},
+        )
 
     assert response.status_code == 200
     assert response.json() == {"ok": True}
-    # Never marks the subscription active itself -- only the real webhook does.
-    assert db.get_subscription_by_razorpay_id("sub_test123")["status"] == "created"
+    mock_get_sub.assert_called_once_with("sub_test123")
+    mock_get_payment.assert_called_once_with("pay_test123")
+
+    subscription = db.get_subscription_by_razorpay_id("sub_test123")
+    assert subscription["status"] == "active"
+    assert subscription["current_period_end"] is not None
+
+    payments = db.list_payments(customer_id=customer["id"])
+    assert len(payments) == 1
+    assert payments[0]["razorpay_payment_id"] == "pay_test123"
+    assert payments[0]["original_amount_minor"] == 29900
+    assert payments[0]["status"] == "captured"
+
+    # Entitlement actually recognizes the customer as paid now.
+    assert db.get_active_subscription(customer["id"]) is not None
 
 
 def test_verify_subscription_auth_rejects_a_bad_signature(tmp_path, monkeypatch):
@@ -468,6 +538,155 @@ def test_verify_subscription_auth_requires_login(tmp_path, monkeypatch):
     )
 
     assert response.status_code == 401
+
+
+def test_verify_subscription_auth_rejects_a_wrong_plan(tmp_path, monkeypatch):
+    """The subscription Razorpay actually reports must match the plan our
+    own pending row expects -- never trust that just because Checkout
+    authorized *some* subscription, it was necessarily for the plan the
+    customer chose.
+    """
+    _fresh_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings, "razorpay_key_secret", "test-key-secret")
+    customer = _verified_customer("priya@example.com")
+    session = _logged_in_client(customer)
+    db.create_pending_subscription(customer["id"], "monthly", "INR", "sub_test123")
+
+    wrong_plan_subscription = _mock_active_subscription(plan_id="plan_TZXpRhkLY9q1NK")  # the yearly plan id
+    with patch("app.billing.routes.razorpay_client.get_subscription", return_value=wrong_plan_subscription), patch(
+        "app.billing.routes.razorpay_client.get_payment", return_value=_mock_captured_payment()
+    ):
+        response = session.post(
+            "/billing/verify-subscription-auth",
+            data={"razorpay_payment_id": "pay_test123", "razorpay_signature": _valid_signature("pay_test123", "sub_test123")},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "plan_mismatch"
+    assert db.get_subscription_by_razorpay_id("sub_test123")["status"] == "created"
+    assert db.list_payments(customer_id=customer["id"]) == []
+
+
+def test_verify_subscription_auth_rejects_an_unpaid_subscription(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings, "razorpay_key_secret", "test-key-secret")
+    customer = _verified_customer("priya@example.com")
+    session = _logged_in_client(customer)
+    db.create_pending_subscription(customer["id"], "monthly", "INR", "sub_test123")
+
+    not_yet_paid = _mock_active_subscription(paid_count=0)
+    not_yet_paid["status"] = "created"
+    with patch("app.billing.routes.razorpay_client.get_subscription", return_value=not_yet_paid), patch(
+        "app.billing.routes.razorpay_client.get_payment", return_value=_mock_captured_payment()
+    ):
+        response = session.post(
+            "/billing/verify-subscription-auth",
+            data={"razorpay_payment_id": "pay_test123", "razorpay_signature": _valid_signature("pay_test123", "sub_test123")},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "subscription_not_active"
+    assert db.get_subscription_by_razorpay_id("sub_test123")["status"] == "created"
+    assert db.list_payments(customer_id=customer["id"]) == []
+
+
+def test_verify_subscription_auth_rejects_an_uncaptured_payment(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings, "razorpay_key_secret", "test-key-secret")
+    customer = _verified_customer("priya@example.com")
+    session = _logged_in_client(customer)
+    db.create_pending_subscription(customer["id"], "monthly", "INR", "sub_test123")
+
+    failed_payment = _mock_captured_payment()
+    failed_payment["status"] = "failed"
+    with patch("app.billing.routes.razorpay_client.get_subscription", return_value=_mock_active_subscription()), patch(
+        "app.billing.routes.razorpay_client.get_payment", return_value=failed_payment
+    ):
+        response = session.post(
+            "/billing/verify-subscription-auth",
+            data={"razorpay_payment_id": "pay_test123", "razorpay_signature": _valid_signature("pay_test123", "sub_test123")},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "payment_not_captured"
+    assert db.get_subscription_by_razorpay_id("sub_test123")["status"] == "created"
+    assert db.list_payments(customer_id=customer["id"]) == []
+
+
+def test_verify_subscription_auth_is_idempotent_on_retry(tmp_path, monkeypatch):
+    """A refreshed page or a retried callback for the same already-reconciled
+    payment must be a harmless no-op -- never a second payment row, and
+    never a second round-trip to Razorpay's API.
+    """
+    _fresh_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings, "razorpay_key_secret", "test-key-secret")
+    customer = _verified_customer("priya@example.com")
+    session = _logged_in_client(customer)
+    db.create_pending_subscription(customer["id"], "monthly", "INR", "sub_test123")
+
+    data = {"razorpay_payment_id": "pay_test123", "razorpay_signature": _valid_signature("pay_test123", "sub_test123")}
+    with patch("app.billing.routes.razorpay_client.get_subscription", return_value=_mock_active_subscription()) as mock_get_sub, patch(
+        "app.billing.routes.razorpay_client.get_payment", return_value=_mock_captured_payment()
+    ) as mock_get_payment:
+        first = session.post("/billing/verify-subscription-auth", data=data)
+        second = session.post("/billing/verify-subscription-auth", data=data)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    # The second call short-circuits on the idempotency check before ever
+    # calling Razorpay again.
+    mock_get_sub.assert_called_once()
+    mock_get_payment.assert_called_once()
+    assert len(db.list_payments(customer_id=customer["id"])) == 1
+
+
+def test_verify_subscription_auth_returns_502_on_razorpay_api_failure(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings, "razorpay_key_secret", "test-key-secret")
+    customer = _verified_customer("priya@example.com")
+    session = _logged_in_client(customer)
+    db.create_pending_subscription(customer["id"], "monthly", "INR", "sub_test123")
+
+    with patch(
+        "app.billing.routes.razorpay_client.get_subscription", side_effect=httpx.ConnectError("boom")
+    ):
+        response = session.post(
+            "/billing/verify-subscription-auth",
+            data={"razorpay_payment_id": "pay_test123", "razorpay_signature": _valid_signature("pay_test123", "sub_test123")},
+        )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == "razorpay_verification_failed"
+    assert db.get_subscription_by_razorpay_id("sub_test123")["status"] == "created"
+    assert db.list_payments(customer_id=customer["id"]) == []
+
+
+def test_verify_subscription_auth_scopes_strictly_to_the_calling_customers_own_subscription(tmp_path, monkeypatch):
+    """Customer B cannot reconcile using a signature that was only ever
+    valid for customer A's subscription -- get_latest_subscription_for_customer
+    scopes to the logged-in customer, so B's own (different) pending
+    subscription id is what gets checked, not A's.
+    """
+    _fresh_db(tmp_path, monkeypatch)
+    monkeypatch.setattr(settings, "razorpay_key_secret", "test-key-secret")
+    customer_a = _verified_customer("priya@example.com")
+    customer_b = _verified_customer("rahul@example.com")
+    session_b = _logged_in_client(customer_b)
+    db.create_pending_subscription(customer_a["id"], "monthly", "INR", "sub_a_real")
+    db.create_pending_subscription(customer_b["id"], "monthly", "INR", "sub_b_real")
+
+    # Signature genuinely valid for A's subscription and payment.
+    a_signature = _valid_signature("pay_a_real", "sub_a_real")
+
+    response = session_b.post(
+        "/billing/verify-subscription-auth",
+        data={"razorpay_payment_id": "pay_a_real", "razorpay_signature": a_signature},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "signature_verification_failed"
+    assert db.get_subscription_by_razorpay_id("sub_a_real")["status"] == "created"
+    assert db.get_subscription_by_razorpay_id("sub_b_real")["status"] == "created"
 
 
 # --- POST /billing/webhook/razorpay ----------------------------------------

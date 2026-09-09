@@ -69,6 +69,27 @@ def create_subscription(plan_id: str, customer_id: str, billing_cycle: str, note
     return response.json()
 
 
+def get_subscription(razorpay_subscription_id: str) -> dict:
+    """Fetches the authoritative Subscription entity directly from Razorpay
+    -- used by the server-side reconciliation path (POST
+    /billing/verify-subscription-auth) to confirm plan/status independently
+    of anything the browser's Standard Checkout callback claims.
+    """
+    response = httpx.get(f"{_BASE_URL}/subscriptions/{razorpay_subscription_id}", auth=_auth(), timeout=15.0)
+    response.raise_for_status()
+    return response.json()
+
+
+def get_payment(razorpay_payment_id: str) -> dict:
+    """Fetches the authoritative Payment entity directly from Razorpay --
+    same reconciliation purpose as get_subscription above, confirming the
+    payment was actually captured rather than trusting the browser.
+    """
+    response = httpx.get(f"{_BASE_URL}/payments/{razorpay_payment_id}", auth=_auth(), timeout=15.0)
+    response.raise_for_status()
+    return response.json()
+
+
 def cancel_subscription(razorpay_subscription_id: str) -> dict:
     """`cancel_at_cycle_end=1` -- the customer keeps access through what
     they already paid for, per the plan's explicit requirement, rather than
@@ -106,7 +127,7 @@ def verify_payment_signature(payment_id: str, subscription_id: str, signature: s
     key from verify_webhook_signature above).
 
     `subscription_id` must be the value our own server already recorded for
-    this customer (see app.db.get_latest_pending_subscription), never the
+    this customer (see app.db.get_latest_subscription_for_customer), never the
     razorpay_subscription_id the browser's callback reports -- Razorpay's own
     integration guide warns against trusting that value for this comparison,
     since a tampered client response could otherwise claim any subscription id.
