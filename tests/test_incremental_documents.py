@@ -10,15 +10,40 @@ hitting the real sqlite file.
 """
 from fastapi.testclient import TestClient
 
-from app import db
+from app import auth, db
+from app.config import settings
 from app.main import _available_files, app
 
 client = TestClient(app)
 
 
+def _fresh_db(tmp_path, monkeypatch):
+    db_path = tmp_path / "runs.sqlite3"
+    monkeypatch.setattr(settings, "db_path", db_path)
+    db.init_db()
+
+
+def _logged_in_client(email: str = "priya@example.com") -> TestClient:
+    """/dashboard requires a real session now (the old ?name=... anonymous
+    fallback is gone -- see tests/test_customer_dashboard.py), so these
+    document-status-rendering tests need a real logged-in customer, not a
+    query param.
+    """
+    db.create_customer(name="Priya Shah", email=email)
+    for policy in auth.REQUIRED_CONSENT_POLICIES:
+        db.record_consent(email=email, policy_type=policy, policy_version="test")
+    db.update_customer(db.get_customer_by_email(email)["id"], email_verified=1)
+    code = auth.issue_otp(email)
+    session = TestClient(app, base_url="https://testserver")
+    session.post("/auth/verify-otp", data={"email": email, "code": code})
+    return session
+
+
 def _patch_list_runs(monkeypatch, run_row):
-    monkeypatch.setattr(db, "list_runs", lambda user_name=None, client_name=None, limit=50: [dict(run_row)])
-    monkeypatch.setattr(db, "distinct_client_names", lambda user_name=None: [])
+    monkeypatch.setattr(
+        db, "list_runs", lambda limit=50, user_name=None, client_name=None, customer_id=None: [dict(run_row)]
+    )
+    monkeypatch.setattr(db, "distinct_client_names", lambda **kwargs: [])
 
 
 def test_available_files_empty_when_no_folder_path():
@@ -45,6 +70,7 @@ def test_available_files_lists_only_what_actually_exists(tmp_path):
 
 
 def test_dashboard_shows_generate_buttons_for_documents_not_yet_generated(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
     folder = tmp_path / "Weekly Sync - 2026-08-22 1200"
     folder.mkdir()
     (folder / "transcript.json").write_text("{}")
@@ -64,7 +90,8 @@ def test_dashboard_shows_generate_buttons_for_documents_not_yet_generated(tmp_pa
     }
     _patch_list_runs(monkeypatch, run_row)
 
-    response = client.get("/dashboard", params={"name": "Priya Shah"})
+    session = _logged_in_client()
+    response = session.get("/dashboard")
 
     assert response.status_code == 200
     # MOM already has a .pdf on disk -- ready, with a download link.
@@ -76,6 +103,7 @@ def test_dashboard_shows_generate_buttons_for_documents_not_yet_generated(tmp_pa
 
 
 def test_dashboard_shows_download_links_for_every_ready_document(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
     folder = tmp_path / "Weekly Sync - 2026-08-22 1200"
     folder.mkdir()
     (folder / "transcript.json").write_text("{}")
@@ -95,7 +123,8 @@ def test_dashboard_shows_download_links_for_every_ready_document(tmp_path, monke
     }
     _patch_list_runs(monkeypatch, run_row)
 
-    response = client.get("/dashboard", params={"name": "Priya Shah"})
+    session = _logged_in_client()
+    response = session.get("/dashboard")
 
     assert response.status_code == 200
     assert "/meetings/r1/files/MOM.pdf" in response.text
@@ -103,6 +132,7 @@ def test_dashboard_shows_download_links_for_every_ready_document(tmp_path, monke
 
 
 def test_dashboard_shows_client_name_when_set(tmp_path, monkeypatch):
+    _fresh_db(tmp_path, monkeypatch)
     folder = tmp_path / "Weekly Sync - 2026-08-22 1200"
     folder.mkdir()
 
@@ -118,7 +148,8 @@ def test_dashboard_shows_client_name_when_set(tmp_path, monkeypatch):
     }
     _patch_list_runs(monkeypatch, run_row)
 
-    response = client.get("/dashboard", params={"name": "Priya Shah"})
+    session = _logged_in_client()
+    response = session.get("/dashboard")
 
     assert response.status_code == 200
     assert "Acme Corp" in response.text

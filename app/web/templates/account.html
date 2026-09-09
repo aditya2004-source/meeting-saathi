@@ -13,19 +13,7 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="site">
-  <div class="topbar">
-    <a class="wordmark" href="/"><img class="mark" src="/static/brand/logo.png" alt="Meeting Saathi">Meeting Saathi</a>
-    <nav class="nav-links" id="nav-links">
-      <a href="/dashboard">My Meetings</a>
-      <a href="/feedback">Feedback</a>
-      <button type="button" class="btn ghost" onclick="logout()">Logout</button>
-    </nav>
-    <div class="nav-actions">
-      <button class="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="nav-links">
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-      </button>
-    </div>
-  </div>
+  {% include "_topbar.html" %}
 
   <div class="app-shell" style="max-width:640px;">
     <h1>My Account</h1>

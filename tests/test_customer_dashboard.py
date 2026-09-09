@@ -92,14 +92,20 @@ def test_dashboard_shows_active_plan_name_when_subscribed(tmp_path, monkeypatch)
     assert "(active)" in response.text
 
 
-def test_anonymous_name_scoping_still_works_without_a_session(tmp_path, monkeypatch):
+def test_dashboard_without_a_session_redirects_to_login(tmp_path, monkeypatch):
+    """Production-simplification: the old anonymous ?name=... fallback is
+    gone -- a caller with no session is sent to /login (round-tripping back
+    to /dashboard via next= on success), never shown a bare meetings list
+    by an unauthenticated, spoofable name query param.
+    """
     _fresh_db(tmp_path, monkeypatch)
     db.create_run(title="Legacy meeting", audio_path="", user_name="Priya Shah")
+    fresh_client = TestClient(app, base_url="https://testserver")
 
-    response = client.get("/dashboard", params={"name": "Priya Shah"})
+    response = fresh_client.get("/dashboard", params={"name": "Priya Shah"}, follow_redirects=False)
 
-    assert response.status_code == 200
-    assert "Legacy meeting" in response.text
+    assert response.status_code == 303
+    assert response.headers["location"] == "/login?next=/dashboard"
 
 
 def test_account_page_requires_login(tmp_path, monkeypatch):
@@ -109,7 +115,7 @@ def test_account_page_requires_login(tmp_path, monkeypatch):
     response = fresh_client.get("/account", follow_redirects=False)
 
     assert response.status_code == 303
-    assert response.headers["location"] == "/signup"
+    assert response.headers["location"] == "/login?next=/account"
 
 
 def test_account_page_shows_customer_details_when_logged_in(tmp_path, monkeypatch):

@@ -52,6 +52,13 @@ def subscribe(
         # rejected too rather than attempting to create a Razorpay
         # subscription against a placeholder plan id.
         raise HTTPException(status_code=400, detail="plan_not_available")
+    if db.get_active_subscription(customer["id"]) is not None:
+        # Defense in depth -- /pricing already hides the purchase buttons
+        # from an already-active subscriber (see
+        # app.site_routes._active_subscription_for_request), but a direct
+        # API call (or a stale page still showing the buttons) must not be
+        # able to create a second real Razorpay subscription/charge.
+        raise HTTPException(status_code=409, detail="already_subscribed")
 
     with _subscribe_in_progress_lock:
         if customer["id"] in _subscribe_in_progress:

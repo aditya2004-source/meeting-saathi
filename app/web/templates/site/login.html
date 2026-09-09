@@ -25,6 +25,9 @@
 </div>
 <script>
 let loginEmail = '';
+// Server-validated in app.site_routes.login_page (_safe_next_path) before
+// ever reaching this page -- always a same-site path, never open-redirect-able.
+const loginNextPath = {{ next | tojson }};
 
 async function sendCode() {
   loginEmail = document.getElementById('email').value.trim();
@@ -63,7 +66,7 @@ async function verifyCode() {
     errorEl.hidden = false;
     return;
   }
-  window.location.href = '/dashboard';
+  window.location.href = loginNextPath;
 }
 </script>
 {% endblock %}

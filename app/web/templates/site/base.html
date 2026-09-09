@@ -26,21 +26,7 @@
   {% block extra_head %}{% endblock %}
 </head>
 <body class="site">
-  <div class="topbar">
-    <a class="wordmark" href="/"><img class="mark" src="/static/brand/logo.png" alt="Meeting Saathi">Meeting Saathi</a>
-    <nav class="nav-links" id="nav-links">
-      <a href="/how-it-works">How It Works</a>
-      <a href="/pricing">Pricing</a>
-      <a href="/#faq">FAQ</a>
-      <a href="/login">Login</a>
-      <a class="btn primary" href="/signup">Start Free</a>
-    </nav>
-    <div class="nav-actions">
-      <button class="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="nav-links">
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-      </button>
-    </div>
-  </div>
+  {% include "_topbar.html" %}
 
   {% block content %}{% endblock %}
 

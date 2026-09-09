@@ -12,31 +12,17 @@
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body class="site">
-  <div class="topbar">
-    <a class="wordmark" href="/"><img class="mark" src="/static/brand/logo.png" alt="Meeting Saathi">Meeting Saathi</a>
-    <nav class="nav-links" id="nav-links">
-      {% if customer %}
-        <a href="/account">My Account</a>
-        <a href="/feedback">Feedback</a>
-        <button type="button" class="btn ghost" onclick="logout()">Logout</button>
-      {% elif logout_url %}
+  {% include "_topbar.html" %}
+  {% if not customer and logout_url %}
+    <!-- Legacy anonymous ?name= view (see app.main.index's docstring) --
+         its own admin-analytics/logout links, distinct from the real
+         customer nav above, since this caller has no real session at all. -->
+    <div class="topbar" style="border-top:1px solid var(--ms-border, #e5e5e5);">
+      <nav class="nav-links">
         {% if admin_analytics_url %}<a href="{{ admin_analytics_url }}">Business Analytics</a>{% endif %}
         <a href="{{ logout_url }}">Logout</a>
-      {% endif %}
-    </nav>
-    <div class="nav-actions">
-      <button class="nav-toggle" aria-label="Toggle menu" aria-expanded="false" aria-controls="nav-links">
-        <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M3 5h14M3 10h14M3 15h14" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
-      </button>
+      </nav>
     </div>
-  </div>
-  {% if customer %}
-    <script>
-      async function logout() {
-        await fetch('/auth/logout', {method: 'POST'});
-        window.location.href = '/';
-      }
-    </script>
   {% endif %}
 
   <div class="app-shell">

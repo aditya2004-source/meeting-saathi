@@ -98,8 +98,36 @@ def _ctx(request: Request, title: str, description: str, path: str, noindex: boo
         "canonical_url": f"{base}{path}",
         "og_image_url": f"{base}/static/icon128.png",
         "noindex": noindex,
+        # Every public page auto-detects an existing customer session so the
+        # shared topbar (_topbar.html) can show Dashboard/Account/Logout
+        # instead of Login/Start Free -- a caller that already computed
+        # `customer` itself (e.g. welcome_page, pricing) overrides this via
+        # **extra below, so this is only a default, not a re-computation.
+        "customer": auth.get_current_customer_optional(request),
         **extra,
     }
+
+
+def _safe_next_path(next_path: str) -> str:
+    """Open-redirect guard for the /login?next=... flow: only an internal,
+    same-site path is ever honored. Rejects protocol-relative URLs (//evil)
+    and anything carrying a scheme (https://evil, javascript:), which a
+    crafted link could otherwise use to redirect a customer's authenticated
+    session off-site right after a real OTP login.
+    """
+    if next_path.startswith("/") and not next_path.startswith("//") and "://" not in next_path:
+        return next_path
+    return "/dashboard"
+
+
+def _active_subscription_for_request(request: Request) -> dict | None:
+    """Used by both / and /pricing so a logged-in, already-paying customer
+    sees their current-plan state instead of live purchase buttons --
+    /billing/subscribe also independently rejects a second subscription
+    server-side, this is purely the matching customer-facing UX.
+    """
+    customer = auth.get_current_customer_optional(request)
+    return db.get_active_subscription(customer["id"]) if customer else None
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -127,6 +155,7 @@ def pricing(request: Request):
             "Pricing -- Meeting Saathi",
             "3 free meetings, then simple monthly or yearly pricing for unlimited meetings.",
             "/pricing",
+            active_subscription=_active_subscription_for_request(request),
             **_pricing_context(),
         ),
     )
@@ -232,17 +261,23 @@ def welcome_page(request: Request):
 
 
 @router.get("/login", response_class=HTMLResponse)
-def login_page(request: Request):
+def login_page(request: Request, next: str = "/dashboard"):
     """Lightweight returning-customer entry point: email -> OTP -> verify,
     reusing the same /auth/send-otp + /auth/verify-otp backend as signup.
     No name/consent step -- app.auth_routes.send_otp already skips the
     consent requirement for an already-verified email, so this page simply
     can't move a never-verified email past sending an OTP (that still
     requires a real signup + consent).
+
+    `next` carries where to return the customer after a successful OTP
+    verify (e.g. /account or /pricing, when their session expired mid-visit
+    there) -- validated here, server-side, before ever being embedded into
+    the page, so /login can never be used as an open redirect.
     """
+    safe_next = _safe_next_path(next)
     return templates.TemplateResponse(
         "site/login.html",
-        _ctx(request, "Log In -- Meeting Saathi", "Log in to your Meeting Saathi account.", "/login"),
+        _ctx(request, "Log In -- Meeting Saathi", "Log in to your Meeting Saathi account.", "/login", next=safe_next),
     )
 
 

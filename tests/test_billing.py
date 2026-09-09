@@ -197,6 +197,33 @@ def test_subscribe_rejects_a_currently_non_purchasable_currency(tmp_path, monkey
     mock_create.assert_not_called()
 
 
+def test_subscribe_rejects_a_customer_who_already_has_an_active_subscription(tmp_path, monkeypatch):
+    """A real-money guard: /pricing already hides the purchase buttons from
+    an already-active subscriber, but repeated clicking, a stale open tab,
+    or a direct API call must not be able to create a second real Razorpay
+    subscription/charge for the same customer.
+    """
+    _fresh_db(tmp_path, monkeypatch)
+    customer = _verified_customer("priya@example.com")
+    session = _logged_in_client(customer)
+    db.create_pending_subscription(customer["id"], "monthly", "INR", "sub_already_active")
+    db.update_subscription_status("sub_already_active", status="active")
+
+    with patch("app.billing.routes.razorpay_client.find_or_create_customer") as mock_find, patch(
+        "app.billing.routes.razorpay_client.create_subscription"
+    ) as mock_create:
+        response = session.post("/billing/subscribe", data={"billing_cycle": "yearly", "currency": "INR"})
+
+    assert response.status_code == 409
+    assert response.json()["detail"] == "already_subscribed"
+    mock_find.assert_not_called()
+    mock_create.assert_not_called()
+    # No new/duplicate subscription row was created.
+    with db._connect() as conn:  # noqa: SLF001
+        count = conn.execute("SELECT COUNT(*) AS n FROM subscriptions WHERE customer_id = ?", (customer["id"],)).fetchone()["n"]
+    assert count == 1
+
+
 def test_subscribe_rejects_a_concurrent_duplicate_for_the_same_customer(tmp_path, monkeypatch):
     """Server-side backstop for a rapid double-click getting past the
     pricing page's own client-side click-guard: a second /billing/subscribe

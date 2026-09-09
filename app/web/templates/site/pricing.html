@@ -27,18 +27,28 @@
     <div class="card price-card featured{% if currency == 'INR' %} active{% endif %}" data-plan-block="{{ currency }}">
       <span class="tag">Monthly</span>
       <div class="price-amount">{{ cycles.monthly.display_price }}<span class="cycle">/mo</span></div>
-      <p>Unlimited meetings*</p>
-      <ul><li>{{ icon('check') }} Unlimited meetings, fair use applies</li><li>{{ icon('check') }} Cancel anytime</li></ul>
-      <button class="btn primary block" data-subscribe="monthly" data-currency="{{ currency }}">Choose Monthly</button>
+      {% if active_subscription %}
+        <p>You're on the <strong>{{ active_subscription.plan | capitalize }}</strong> plan.</p>
+        <a class="btn primary block" href="/account">Manage Account</a>
+      {% else %}
+        <p>Unlimited meetings*</p>
+        <ul><li>{{ icon('check') }} Unlimited meetings, fair use applies</li><li>{{ icon('check') }} Cancel anytime</li></ul>
+        <button class="btn primary block" data-subscribe="monthly" data-currency="{{ currency }}">Choose Monthly</button>
+      {% endif %}
     </div>
     {% endfor %}
     {% for currency, cycles in plans_by_currency.items() %}
     <div class="card price-card{% if currency == 'INR' %} active{% endif %}" data-plan-block="{{ currency }}">
       <span class="tag">Yearly</span>
       <div class="price-amount">{{ cycles.yearly.display_price }}<span class="cycle">/yr</span></div>
-      <p>Unlimited meetings*</p>
-      <ul><li>{{ icon('check') }} 2 months free vs. monthly</li><li>{{ icon('check') }} Cancel anytime</li></ul>
-      <button class="btn block" data-subscribe="yearly" data-currency="{{ currency }}">Choose Yearly</button>
+      {% if active_subscription %}
+        <p>You're on the <strong>{{ active_subscription.plan | capitalize }}</strong> plan.</p>
+        <a class="btn block" href="/account">Manage Account</a>
+      {% else %}
+        <p>Unlimited meetings*</p>
+        <ul><li>{{ icon('check') }} 2 months free vs. monthly</li><li>{{ icon('check') }} Cancel anytime</li></ul>
+        <button class="btn block" data-subscribe="yearly" data-currency="{{ currency }}">Choose Yearly</button>
+      {% endif %}
     </div>
     {% endfor %}
   </div>
@@ -97,7 +107,9 @@
 
       const me = await fetch('/account/me');
       if (!me.ok) {
-        window.location.href = '/signup';
+        // A returning customer's session most likely just expired --
+        // /login (carrying next= back to this page), not /signup.
+        window.location.href = '/login?next=/pricing';
         return;
       }
       const customer = await me.json();
@@ -107,7 +119,12 @@
         body: new URLSearchParams({ billing_cycle: billingCycle, currency }),
       });
       if (!response.ok) {
-        showError('Could not start checkout -- please try again in a moment.');
+        const body = await response.json().catch(() => ({}));
+        showError(
+          body.detail === 'already_subscribed'
+            ? "You already have an active subscription -- see your Account page."
+            : 'Could not start checkout -- please try again in a moment.'
+        );
         releaseGuard();
         return;
       }

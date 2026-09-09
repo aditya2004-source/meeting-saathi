@@ -99,15 +99,18 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Backs the admin login session (see /{slug}/login etc. below) -- a signed,
-# httponly cookie is enough for a single-owner admin panel, no server-side
-# session store needed. 7 days so the owner doesn't have to re-login daily;
-# session_cookie_https_only is True by default to match how this actually
-# runs (see app/config.py's comment on that setting).
+# Backs both the admin session (see /{slug}/login etc. below) and every
+# customer session (see app.auth) -- a signed, httponly cookie is enough,
+# no server-side session store needed. 30 days so a customer stays logged
+# in across normal browser restarts/refreshes without re-verifying OTP each
+# time, matching the product requirement that OTP is only for first login
+# on a device, not every visit. session_cookie_https_only is True by
+# default to match how this actually runs (see app/config.py's comment on
+# that setting).
 app.add_middleware(
     SessionMiddleware,
     secret_key=settings.session_secret_key,
-    max_age=7 * 24 * 60 * 60,
+    max_age=30 * 24 * 60 * 60,
     https_only=settings.session_cookie_https_only,
 )
 
@@ -266,77 +269,50 @@ def _progress_for_run(run: dict) -> dict:
 
 
 @app.get("/dashboard")
-def index(request: Request, name: str = "", client: str = ""):
-    """`name` (from the extension's "View Dashboard" button, which passes
-    its own stored user_name) scopes this to just that person's meetings.
-    Without a `name`, there's nothing to scope by -- this is purely the
-    customer-facing view now; the old unfiltered "everyone" view (gated by
-    a static admin_token in this same query string) has moved to
-    /{admin_url_slug}/dashboard behind a real login (see below), so this
-    route can never show every customer's meetings again under any query
-    string.
-    `client` optionally scopes further to one client/project -- purely a
-    dashboard organization aid, doesn't change ordering (still reverse-
-    chronological across whichever meetings match).
+def index(request: Request, client: str = ""):
+    """The customer-facing meetings dashboard, scoped to the logged-in
+    customer's own real customer_id.
+
+    Production-simplification: this used to fall back to an anonymous
+    `?name=...`-scoped view (today's founder extension, before Phase 4's
+    pairing UI existed) whenever no session was present -- confusing for a
+    real customer whose session merely expired, since it silently showed a
+    "pass your name" box instead of prompting login. Every real caller now
+    pairs through the install flow and carries a real session/device token,
+    so an unauthenticated visit here goes straight to /login (round-tripping
+    back here via `next` on success) rather than that legacy fallback. A
+    stray `?name=` from an old extension popup build is simply ignored, not
+    an error (FastAPI drops undeclared query params silently).
 
     Moved here from `/` in Phase 4 -- `/` is now the public marketing
     landing page (see app/site_routes.py). Private route: noindex, matching
     every other authenticated/account-scoped page (see the noindex
     middleware above, which covers this by path prefix).
-
-    Phase 5: a logged-in customer (real session, from Phase 1's OTP login)
-    is now scoped by their real customer_id -- genuinely secure, unlike
-    `name`, which anyone could type. The `?name=...` path stays exactly as
-    it was for a caller with no session at all (today's founder extension,
-    before it's paired through Phase 4's install flow) -- same transitional
-    reasoning as auth.authorize_run_access().
     """
-    name = name.strip()
     client = client.strip()
     customer = auth.get_current_customer_optional(request)
-    if customer is not None:
-        runs = db.list_runs(customer_id=customer["id"], client_name=client or None)
-        for run in runs:
-            run["started_display"] = _format_started(run["created_at"])
-            run["progress"] = _progress_for_run(run)
-        subscription = db.get_active_subscription(customer["id"])
-        trial_exhausted = subscription is None and customer["free_meetings_used"] >= settings.free_meeting_allowance
-        return templates.TemplateResponse(
-            "index.html",
-            {
-                "request": request,
-                "runs": runs,
-                "usage": [],
-                "viewing_name": customer["name"] or customer["email"],
-                "logout_url": "/auth/logout",
-                "client_filter": client,
-                "client_names": db.distinct_client_names(customer_id=customer["id"]),
-                "customer": customer,
-                "subscription": subscription,
-                "free_meeting_allowance": settings.free_meeting_allowance,
-                "trial_exhausted": trial_exhausted,
-            },
-        )
-    if not name:
-        return HTMLResponse(
-            "<p style='font-family: sans-serif; padding: 2rem;'>Pass your name "
-            "(?name=...) to see your meetings.</p>",
-            status_code=200,
-        )
-    runs = db.list_runs(user_name=name, client_name=client or None)
+    if customer is None:
+        return RedirectResponse(url="/login?next=/dashboard", status_code=303)
+    runs = db.list_runs(customer_id=customer["id"], client_name=client or None)
     for run in runs:
         run["started_display"] = _format_started(run["created_at"])
         run["progress"] = _progress_for_run(run)
+    subscription = db.get_active_subscription(customer["id"])
+    trial_exhausted = subscription is None and customer["free_meetings_used"] >= settings.free_meeting_allowance
     return templates.TemplateResponse(
         "index.html",
         {
             "request": request,
             "runs": runs,
             "usage": [],
-            "viewing_name": name,
-            "logout_url": "",
+            "viewing_name": customer["name"] or customer["email"],
+            "logout_url": "/auth/logout",
             "client_filter": client,
-            "client_names": db.distinct_client_names(user_name=name),
+            "client_names": db.distinct_client_names(customer_id=customer["id"]),
+            "customer": customer,
+            "subscription": subscription,
+            "free_meeting_allowance": settings.free_meeting_allowance,
+            "trial_exhausted": trial_exhausted,
         },
     )
 
@@ -349,11 +325,13 @@ def account_page(request: Request):
     explicitly disabled rather than faked, since a fake "requested" toast
     with no real effect would be worse than not having the button at all.
     Requires a real session -- unlike /dashboard, there's no anonymous
-    fallback that makes sense for an account settings page.
+    fallback that makes sense for an account settings page. Redirects to
+    /login (a returning-user's session most likely just expired), not
+    /signup, carrying `next` so the customer lands back here after OTP.
     """
     customer = auth.get_current_customer_optional(request)
     if customer is None:
-        return RedirectResponse(url="/signup", status_code=303)
+        return RedirectResponse(url="/login?next=/account", status_code=303)
     subscription = db.get_active_subscription(customer["id"])
     return templates.TemplateResponse(
         "account.html",
