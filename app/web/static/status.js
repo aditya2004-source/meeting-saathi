@@ -54,9 +54,17 @@
         a.textContent = "Download";
         action.appendChild(a);
       } else if (doc.status === "generating") {
+        // Explicit expected-duration text, not just a bare "Generating…" --
+        // this genuinely takes 60-115s (a real Gemini API call, not a bug),
+        // and with no time expectation set a customer reasonably reads a
+        // silent 60+ second wait as broken. See the elapsed-time fix in
+        // tickElapsed()/applyRun() below: this document-level text is now
+        // the ONLY time signal shown once a run itself has finished
+        // processing, replacing a confusing "since the meeting was
+        // recorded" counter that kept climbing during doc generation.
         const span = document.createElement("span");
         span.className = "muted";
-        span.textContent = "Generating…";
+        span.textContent = "Generating… (usually 1–2 min)";
         action.appendChild(span);
       } else if (doc.status === "unavailable") {
         const span = document.createElement("span");
@@ -167,6 +175,12 @@
     const resultEl = card.querySelector(".status-result");
     if (resultEl) renderResult(resultEl, run, progress);
 
+    // Kept in sync with every poll (not just the initial page render) so
+    // tickElapsed() below can tell "still recording/processing" apart from
+    // "recording finished, a document is generating on demand" -- those are
+    // two very different things to a customer and need different time
+    // signals, not one counter that conflates them.
+    card.dataset.state = run.state;
     card.dataset.polling = TERMINAL_STATES.has(run.state) && !anyDocumentGenerating(progress) ? "0" : "1";
   }
 
@@ -198,6 +212,19 @@
       if (card.dataset.polling === "0") return; // terminal -- elapsed no longer meaningful
       const elapsedEl = card.querySelector(".status-elapsed");
       if (!elapsedEl) return;
+      // Once the run itself has finished recording/processing
+      // (state=saved/failed), "elapsed" counted from the meeting's
+      // created_at keeps climbing for as long as ANY document is later
+      // generated on demand -- looking exactly like the whole meeting is
+      // still stuck in progress, sometimes hours after it actually
+      // finished. That elapsed number stops being a meaningful signal the
+      // moment the run itself is done; each document's own "Generating…
+      // (usually 1-2 min)" label (see renderDocumentCatalogue) is the
+      // correct time signal for that phase instead.
+      if (TERMINAL_STATES.has(card.dataset.state)) {
+        elapsedEl.textContent = "";
+        return;
+      }
       const createdAt = Date.parse(card.dataset.createdAt);
       if (Number.isNaN(createdAt)) return;
       elapsedEl.textContent = `${formatDuration((now - createdAt) / 1000)} elapsed`;

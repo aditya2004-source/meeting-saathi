@@ -5,7 +5,11 @@
    ========================================================================== */
 
 :root {
-  /* --- Color: off-white/neutral base, indigo->violet as a restrained accent --- */
+  /* --- Color: off-white/neutral base, the real logo gradient (blue -> violet
+     -> pink -> orange, sampled from app/web/static/brand/logo.png) as the
+     accent. Base stays a clean neutral -- the logo's own vivid ring is the
+     accent, not the page background, which is what keeps a colorful mark
+     reading as premium rather than loud. --- */
   --ms-bg: #FAFAF9;
   --ms-bg-alt: #F4F3FF;         /* faint violet-tinted section background, used sparingly */
   --ms-surface: #FFFFFF;
@@ -17,10 +21,13 @@
 
   --ms-accent-1: #4F46E5;       /* indigo */
   --ms-accent-2: #7C3AED;       /* violet */
+  --ms-accent-3: #E0389B;       /* magenta -- logo's ring, blue->orange midpoint */
+  --ms-accent-4: #FE8103;       /* orange -- logo's ring, exact sampled hex */
+  --ms-accent-cyan: #02BEC8;    /* cyan -- logo's left figure, exact sampled hex */
   --ms-accent-soft: #EEF2FF;
   --ms-accent-ring: rgba(79, 70, 229, 0.35);
-  --ms-gradient: linear-gradient(135deg, var(--ms-accent-1), var(--ms-accent-2));
-  --ms-gradient-soft: linear-gradient(135deg, rgba(79,70,229,0.08), rgba(124,58,237,0.08));
+  --ms-gradient: linear-gradient(120deg, #005FFC 0%, var(--ms-accent-2) 38%, var(--ms-accent-3) 68%, var(--ms-accent-4) 100%);
+  --ms-gradient-soft: linear-gradient(120deg, rgba(0,95,252,0.08), rgba(124,58,237,0.08) 45%, rgba(224,56,155,0.08) 75%, rgba(254,129,3,0.08));
 
   --ms-success: #0F9D58;
   --ms-success-bg: #ECFDF3;
@@ -175,7 +182,7 @@ body.site {
   border-color: transparent;
   box-shadow: var(--ms-shadow-glow);
 }
-.site .btn.primary:hover { box-shadow: 0 0 0 1px rgba(79,70,229,0.15), 0 26px 70px rgba(79,70,229,0.22); }
+.site .btn.primary:hover { box-shadow: 0 0 0 1px rgba(79,70,229,0.15), 0 26px 70px rgba(79,70,229,0.18), 0 8px 30px rgba(254,129,3,0.14); }
 .site .btn.ghost { background: transparent; border-color: transparent; }
 .site .btn.danger { color: var(--ms-danger); border-color: #F3C6C2; background: var(--ms-danger-bg); }
 .site .btn.danger:hover { background: #FEE4E1; }
@@ -207,6 +214,7 @@ body.site {
   border-radius: var(--ms-radius-pill);
   font-size: 0.78rem;
   font-weight: 700;
+  font-style: italic;
   letter-spacing: 0.02em;
   margin-bottom: var(--ms-space-4);
 }
@@ -393,9 +401,11 @@ body.site {
   position: relative;
   overflow: hidden;
   background:
-    radial-gradient(820px 620px at 88% 2%, rgba(124,58,237,0.19), transparent 58%),
+    radial-gradient(760px 580px at 90% 0%, rgba(254,129,3,0.14), transparent 56%),
+    radial-gradient(820px 620px at 88% 8%, rgba(124,58,237,0.19), transparent 58%),
     radial-gradient(640px 560px at 98% 64%, rgba(79,70,229,0.15), transparent 64%),
-    radial-gradient(720px 480px at 26% 108%, rgba(79,70,229,0.08), transparent 70%),
+    radial-gradient(560px 460px at 6% 6%, rgba(2,190,200,0.10), transparent 62%),
+    radial-gradient(720px 480px at 26% 108%, rgba(224,56,155,0.07), transparent 70%),
     linear-gradient(180deg, #FDFBF8 0%, var(--ms-bg) 42%, var(--ms-bg-alt) 100%);
 }
 .site .hero::after {
@@ -411,7 +421,7 @@ body.site {
   z-index: -1;
 }
 .site .hero h1 { font-size: clamp(2.1rem, 4vw, 3.1rem); margin-bottom: var(--ms-space-4); }
-.site .hero .lead { font-size: 1.1rem; color: var(--ms-muted); max-width: 500px; margin: 0 0 var(--ms-space-5); }
+.site .hero .lead { font-size: 1.15rem; font-style: italic; line-height: 1.6; color: var(--ms-ink-soft); max-width: 500px; margin: 0 0 var(--ms-space-5); }
 .site .hero-actions { display: flex; gap: var(--ms-space-3); flex-wrap: wrap; }
 
 /* --- Animated hero mockup: replaceable slot for a future real recording ---
@@ -423,7 +433,9 @@ body.site {
   content: "";
   position: absolute;
   inset: -36px -22px;
-  background: radial-gradient(closest-side, rgba(124,58,237,0.22), rgba(79,70,229,0.09) 60%, transparent 78%);
+  background:
+    radial-gradient(closest-side, rgba(124,58,237,0.22), rgba(79,70,229,0.09) 60%, transparent 78%),
+    radial-gradient(closest-side at 82% 88%, rgba(254,129,3,0.16), transparent 70%);
   filter: blur(26px);
   z-index: 0;
   pointer-events: none;
