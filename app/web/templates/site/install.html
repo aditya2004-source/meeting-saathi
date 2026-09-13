@@ -7,41 +7,23 @@
     <h1>Install the extension</h1>
     <p>A one-time setup. Once connected, Meeting Saathi records from your own browser tab -- no bot joins your call.</p>
     <div class="install-download">
-      <a class="btn primary lg" href="/static/meeting-saathi-extension.zip">Download Extension (.zip)</a>
+      <a class="btn primary lg" href="https://chromewebstore.google.com/detail/modfdlphhlcahmfnmbapnedhefmocfej" target="_blank" rel="noopener">Add to Chrome -- it's free</a>
     </div>
+    <p style="font-size:0.82rem;color:var(--ms-muted);margin-top:var(--ms-space-2);">
+      Having trouble with the Chrome Web Store? <a href="/static/meeting-saathi-extension.zip">Download the ZIP</a> and load it manually instead.
+    </p>
   </div>
 
   <div class="install-steps reveal">
     <div class="install-step">
       <div class="install-num">1</div>
       <div class="install-body">
-        <h3>Extract the ZIP</h3>
-        <p>Keep the extracted folder somewhere permanent -- Chrome loads it from that folder every time it starts.</p>
+        <h3>Add it to Chrome</h3>
+        <p>Click "Add to Chrome" above, then confirm "Add extension" in Chrome's own prompt.</p>
       </div>
     </div>
     <div class="install-step">
       <div class="install-num">2</div>
-      <div class="install-body">
-        <h3>Open Chrome's extensions page</h3>
-        <p>Go to <code>chrome://extensions</code> in your address bar.</p>
-      </div>
-    </div>
-    <div class="install-step">
-      <div class="install-num">3</div>
-      <div class="install-body">
-        <h3>Turn on Developer mode</h3>
-        <p>Use the toggle in the top-right corner of that page.</p>
-      </div>
-    </div>
-    <div class="install-step">
-      <div class="install-num">4</div>
-      <div class="install-body">
-        <h3>Load unpacked</h3>
-        <p>Click "Load unpacked" and select the folder you extracted in step 1.</p>
-      </div>
-    </div>
-    <div class="install-step">
-      <div class="install-num">5</div>
       <div class="install-body">
         <h3>Pin it to your toolbar</h3>
         <p>Click the puzzle-piece icon in Chrome's toolbar and pin Meeting Saathi so it's always one click away.</p>
@@ -57,10 +39,10 @@
       </div>
     </div>
     <div class="install-step">
-      <div class="install-num">6</div>
+      <div class="install-num">3</div>
       <div class="install-body">
         <h3>Connect your account</h3>
-        <p>Click below once the extension is loaded. This links it to your Meeting Saathi account -- no code to type in.</p>
+        <p>Click below once the extension is installed. This links it to your Meeting Saathi account -- no code to type in.</p>
         <div class="install-connect">
           <button class="btn primary" onclick="connectAccount()">Connect Account</button>
           <span id="connect-status"></span>
@@ -68,7 +50,7 @@
       </div>
     </div>
     <div class="install-step">
-      <div class="install-num">7</div>
+      <div class="install-num">4</div>
       <div class="install-body">
         <h3>Allow microphone access</h3>
         <p>Chrome will ask for microphone permission the first time you start recording -- allow it.</p>
@@ -86,10 +68,13 @@
   </div>
 </section>
 <script>
-// Kept in sync with Admin personal/extension(personal)/manifest.json's "key"
-// field -- that key pins this exact deterministic id, so every customer's
-// "Load unpacked" install resolves to the same, known extension id.
-const EXTENSION_ID = "bflaaogdbjndnpjadgdnliajmfoihjgf";
+// Chrome Web Store approved this extension on 2026-09-13 -- this is the
+// real, permanent Store-assigned id (captured at upload time), not the dev
+// build's pinned "key" id anymore. Kept in sync with CORS_ALLOWED_ORIGINS in
+// production's .env, which must allow chrome-extension://<this-id> for the
+// backend to accept any request (start/chunk/finalize/pairing) from a real
+// Store-installed copy at all -- see docs/11-CHROME-WEB-STORE.md.
+const EXTENSION_ID = "modfdlphhlcahmfnmbapnedhefmocfej";
 const PAIRING_MESSAGE_TYPE = "MEETING_SAATHI_PAIR";
 
 async function connectAccount() {
